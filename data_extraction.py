@@ -2,8 +2,10 @@ import json
 import requests
 import tqdm
 import re
-from bs4 import BeautifulSoup
 import os
+import pickle
+from bs4 import BeautifulSoup
+
 # name format is sou_<year>_<id>.pdf or column 1 for html (check column 7 and 16 for sou with multiple parts at https://data.riksdagen.se/dokument/
 # do we care about relations between SOUs in multiple parts?
 # are the summaries useful? 
@@ -20,7 +22,7 @@ def retrieve_ids(sou_csv):
 def extract_from_json():
     """extract document date, text and html locations from respective json file"""
     
-    page = json.load(open("data.riksdagen.se.json"))
+    page = json.load(open("../data.riksdagen.se.json"))
     nb_pages = int(page["dokumentlista"]["@sidor"])
     
     documents = {}
