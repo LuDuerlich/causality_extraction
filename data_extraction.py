@@ -56,7 +56,10 @@ def _freestanding_p(tag):
     #replace (tag.parent.name != "td") by not tag.a to keep two-column instances
     return tag.name == "p" and not tag.a and not _is_pagenum(tag)
 
-
+def _internal_link(tag):
+    """filter out links that are not for navigation in the html"""
+    return tag.name == "a"and tag["href"].startswith("#page")
+    
 def extract_from_html(text):
     """extract text as list of sentences and return full text and summary"""
     # text segments to distinguish
@@ -81,18 +84,18 @@ def extract_from_html(text):
     # work with two-column format -> one case of suggested change of wording i.e. large part of the texts are really similar
    
     
-    links = soup.find_all("a")
+    links = soup.find_all(_internal_link)
 
     # find the name of the section following the summary
     for i,hlink in enumerate(links):
-        #        if not first_section and re.match(r"[A-Za-z]", hlink.text) and hlink.parent.name == "td":
-         #   first_section = hlink.text.strip(". ").casefold()
+        if not first_section and re.match(r"[A-Za-z]+", hlink.text) and hlink.parent.name == "td":
+            first_section = hlink.text.strip(". ").casefold()
         if re.match("sammanfattning", hlink.text.casefold().strip()):
             summary_section_nb = -1
             #print("Update summary_section_nb", summary_section_nb)
-            if i > 0:
+            if hlink.previous_sibling:
                 #print(f"text: '{links[i-1].text}'")
-                match = re.match("[0-9.]+", links[i-1].text)
+                match = re.match("[0-9.]+", hlink.previous_sibling.text)
                 if match:
                     summary_section_nb = int(match.group().split(".")[0])
                     #print("ssn", summary_section_nb)
@@ -102,11 +105,14 @@ def extract_from_html(text):
            not end_of_summary:
             #print("this", hlink, summary_section_nb)
             i += 1
-            #print("new loop")
-            while not re.search(r"[A-Za-z]+ ?\.+", links[i].text):
+            #print("new loop", len(links), i)
+            while i < len(links) and not re.search(r"[A-Za-z]+ ?\.+", links[i].text):
                 # or links[i+1].text.strip().endswith("Sammanfattning"):
                 #print(links[i], i, len(links))
                 i += 1
+            if i >= len(links):
+                print("No summary")
+                break
             #print("stop", links[i], i, len(links), summary_section_nb)
             if summary_section_nb < 0:
                 #print(hlink.text, links[i].text, i)
@@ -116,7 +122,7 @@ def extract_from_html(text):
             if (summary_section_nb and links[i-1].text.strip(". ").startswith(str(summary_section_nb+1))):
                 end_of_summary = links[i].text.strip(". ")
                 #print(summary_section_nb, links[i-1].text.strip(". "), summary_section_nb+1)
-                print(f'2 "{end_of_summary}"')
+                print(f'2 "{end_of_summary}" "{links[i-1]}" "{summary_section_nb}"')
                 section_title = end_of_summary
             else:
                 section_title = links[i].text.strip(". ")
@@ -128,7 +134,6 @@ def extract_from_html(text):
                 break
                 
 
-    
     def _is_end_of_summary(element):
         """helper function to separate summary from (simplified/English version or full report"""
         if end_of_summary and element.text.endswith(end_of_summary):
@@ -158,8 +163,8 @@ def extract_from_html(text):
             print(f"stop summary '{p}'")
         elif p.text.casefold() == "innehåll":
             is_table_of_c = True
-            #if p.text.casefold() == first_section:
-            #is_table_of_c = False
+        if p.text.casefold().strip().endswith(first_section):
+            is_table_of_c = False
         text = p.text
         # correct for p-elements with multiple children, e.g. consecutive spans with missing white space
         children = list(p.children)
@@ -194,9 +199,9 @@ def extract_from_html(text):
                 summary.append(text)
         elif not is_table_of_c and not is_order_info: #?
             full_text.append(text)
-        #if not is_table_of_c and p.parent.name == "td":
-        #    global also_tables
-        #    also_tables.append(soup.head.title)
+        if not is_table_of_c and p.parent.name == "td":
+            global also_tables
+            also_tables.add(soup.head.title)
     return full_text, summary, english_summary, simple_summary
 
 
