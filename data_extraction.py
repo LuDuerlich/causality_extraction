@@ -66,7 +66,7 @@ def extract_from_html(text):
     summary, english_summary, simple_summary, full_text = [], [], [], []
 
     # text segments to exclude
-    is_table_of_c, is_order_info = False, False
+    is_order_info = False, False
 
     soup = BeautifulSoup(requests.get(f'http:{text["content"]["dokument_url_html"]}').text)
     # there does not seem to be any difference between headings and text in the markup
@@ -117,11 +117,8 @@ def extract_from_html(text):
             if p.text.startswith("ISSN"):
                 is_order_info = False
                 continue      
-        
-            #is_table_of_c = True
         elif p.text.casefold() == "sammanfattning" and not summary:
             is_summary = True
-            #is_table_of_c = False
         elif _is_end_of_summary(p):
             is_summary = False
         text = p.text
