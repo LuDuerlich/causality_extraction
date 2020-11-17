@@ -68,7 +68,8 @@ def extract_from_html(text):
     summary, english_summary, simple_summary, full_text = [], [], [], []
 
     # text segments to exclude
-    is_order_info = False, False
+    first_section = ""
+    is_order_info, is_table_of_c = False, False
 
     soup = BeautifulSoup(requests.get(f'http:{text["content"]["dokument_url_html"]}').text)
     # there does not seem to be any difference between headings and text in the markup
@@ -84,9 +85,11 @@ def extract_from_html(text):
 
     # find the name of the section following the summary
     for i,hlink in enumerate(links):
+        if not first_section and re.match(r"[A-Za-z]", hlink.text):
+            first_section = hlink.text.strip(". ").casefold()
         if "Sammanfattning".casefold() in hlink.text.casefold() or\
            (has_english_summary or has_simple_summary):
-            while not re.match(r"[A-Za-z]",links[i+1].text):# or links[i+1].text.strip().endswith("Sammanfattning"):
+            while not re.match(r"[A-Za-z]", links[i+1].text):# or links[i+1].text.strip().endswith("Sammanfattning"):
                 i += 1
             end_of_summary = links[i+1].text.strip(".").strip()
             print(f'"{end_of_summary}"')
@@ -123,8 +126,11 @@ def extract_from_html(text):
             is_summary = True
         elif _is_end_of_summary(p):
             is_summary = False
+        elif p.text.casefold() == "innehåll":
+            is_table_of_c = True
+        if p.text.casefold() == first_section:
+            is_table_of_c = False
         text = p.text
-        
         # correct for consecutive spans with missing white space
         if p.span:
             spans = p.find_all("span")
@@ -141,7 +147,7 @@ def extract_from_html(text):
                 simple_summary.append(text)
             else:
                 summary.append(text)
-        elif not p.text.casefold() == "innehåll" and not is_order_info: #?
+        elif not is_table_of_c and not is_order_info: #?
             full_text.append(text)
     return full_text, summary, english_summary, simple_summary
 
