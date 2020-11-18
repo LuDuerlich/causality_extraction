@@ -182,7 +182,7 @@ def extract_from_html(text):
     
     # find the name of the section following the summary
     # and determine whether there are simplified or English summaries from the table of contents
-    for i,hlink in enumerate(links):
+    for i, hlink in enumerate(links):
         if not first_section and re.match(r"[A-Za-z]+", hlink.text) and hlink.parent.name == "td":
             first_section = hlink.text.strip(". ").casefold()
         if re.match("sammanfattning", hlink.text.casefold().strip()):
@@ -272,7 +272,7 @@ def extract_from_html(text):
             is_table_of_c = False
             continue
 
-        elif f"{p.text}</p></td>" in copied_tables and p["class"][-1] != "ft0":
+        elif f'{p["class"][-1]}">{p.text}</p></td>' in copied_tables and p["class"][-1] != "ft0":
             print("holla", file=out)
             continue
         elif is_summary and _is_end_of_summary(p):
