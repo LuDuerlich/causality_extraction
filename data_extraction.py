@@ -194,7 +194,7 @@ def extract_from_html(text):
 
     # text extraction
     for i, p in enumerate(paragraphs):
-        #print(i, p, is_summary, is_table_of_c, is_english_summary, is_simple_summary, first_section, file=out)
+        #print(i, p, is_summary, is_table_of_c, is_order_info, is_english_summary, is_simple_summary, first_section, file=out)
         if p.text.startswith("SOU och Ds kan köpas från Norstedts Juridiks kundservice."):
             is_order_info = True
         elif is_order_info:
@@ -208,7 +208,7 @@ def extract_from_html(text):
             is_summary = True
             is_table_of_c = False
 
-        elif f"{p.text}</p></td>" in copied_tables:
+        elif f"{p.text}</p></td>" in copied_tables and p["class"][-1] != "ft0":
             continue
         elif is_summary and _is_end_of_summary(p):
             is_summary = False
@@ -223,7 +223,6 @@ def extract_from_html(text):
         children = list(p.children)
         if len(children) > 1:
             text = insert_whitespace(children)
-
         if is_summary:
             if is_english_summary:
                 english_summary.append(text)
@@ -231,11 +230,11 @@ def extract_from_html(text):
                 simple_summary.append(text)
             else:
                 summary.append(text)
-        elif not is_table_of_c and not is_order_info: 
+        elif not is_table_of_c and not is_order_info:
             full_text.append(text)
-        if not is_table_of_c and p.parent.name == "td":
-            global also_tables
-            also_tables.add(soup.head.title)
+        #if not is_table_of_c and p.parent.name == "td":
+        #    global also_tables
+        #    also_tables.add(soup.head.title)
     return full_text, summary, english_summary, simple_summary
 
 
