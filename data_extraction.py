@@ -18,18 +18,24 @@ import bs4
 # remove date and place + SOU ID?
 # work with two-column format -> one case of suggested change of wording i.e. large part of the texts are really similar
 
-class Paragraph:
+class Section:
     """"""
     def __init__(self):
         self.title = None
-        self.text = None
+        self.text = []
+
+    def __repr__(self):
+        return f"Section object with title: '{self.title}', length: {len(self.text)}"
+
         
 class Text:
     """simple text representation"""
-    def __init__(self):
-        self.title = None
+    def __init__(self, title):
+        self.title = title
         self.content = []
 
+    def __repr__(self):
+        return f"Text object with title: '{self.title}', length: {len(self.content)}"
     
 
 def retrieve_ids(sou_csv):
@@ -85,6 +91,7 @@ def _tables_outside_toc(tag):
     """useful for finding headers and real tables"""
     return tag.name == "table" and not tag.find("a")
 
+
 def _appendix(tag):
     """find appendices in table of content"""
     return tag.name == "td" and re.match("bilaga|bilagor", tag.text.casefold().strip())
@@ -122,8 +129,8 @@ def extract_from_html(text):
     has_english_summary, has_simple_summary, has_appendix = False, False, False
 
     # return variables
-    summary, english_summary, simple_summary, full_text = [], [], [], []
-    #summary, english_summary, simple_summary, full_text = Text(), Text(), Text(), Text()
+    #summary, english_summary, simple_summary, full_text = [], [], [], []
+    summary, english_summary, simple_summary, full_text = None, None, None, None
 
     # text segments to exclude
     first_section = ""
@@ -138,7 +145,37 @@ def extract_from_html(text):
     tables = soup.find_all(_tables_outside_toc)
     table_types = set(tables)
     copied_tables = "".join([str(t) for t in table_types if tables.count(t) > 1])
-    
+
+
+
+    # find class names for section title assuming that they are all in bold font
+    title_classes = re.findall("\.(ft\d+)\{font: bold [^}]+\}", str(soup.style))
+    assert title_classes, "No section headings"
+        
+    def __structure(text_part, element, string):
+        #__structure(summary, p, text)
+        """sort out whether an element is part of title or text body
+        and add them to the respective Text object accordingly
+        """
+        font_class = re.search('class="[^"]*(ft\d+)[^"]*"', str(element))
+        print(f"__structure '{font_class[1]}'",file=out)
+        if font_class and font_class[1] in title_classes:
+            # is title
+            new_section = Section()
+            new_section.title = text
+            text_part.content.append(new_section)
+            print("new section",file=out)
+        elif text != text_part.title:
+            # is text body
+            if text_part.content:
+                text_part.content[-1].text.append(text)
+                
+            else:
+                # text_part is empty
+                new_section = Section()
+                new_section.text.append(text)
+                text_part.content.append(new_section)
+                
     # appendix = soup.find_all(_appendix)[0].text.strip()
     # if appendix:
     #     has_appendix = True
@@ -205,11 +242,18 @@ def extract_from_html(text):
         elif has_english_summary and element.text.casefold().endswith("summary"):
             nonlocal is_english_summary
             is_english_summary = True
+            english_summary = Text(element.text)
+            
+
         elif has_simple_summary and element.text.casefold().endswith("lättläst sammanfattning"):
             nonlocal is_simple_summary
             is_simple_summary = True
-        return False
+            simple_summary = Text(element.text)
 
+            
+
+        return False
+    
     # text extraction
     for i, p in enumerate(paragraphs):
         print(i, p, is_summary, is_table_of_c, is_order_info, is_english_summary, is_simple_summary, first_section, end_of_summary, file=out)
@@ -224,9 +268,12 @@ def extract_from_html(text):
 
         elif p.text.casefold() == "sammanfattning" and not summary:
             is_summary = True
+            summary = Text("Sammanfattning")            
             is_table_of_c = False
+            continue
 
         elif f"{p.text}</p></td>" in copied_tables and p["class"][-1] != "ft0":
+            print("holla", file=out)
             continue
         elif is_summary and _is_end_of_summary(p):
             is_summary = False
@@ -243,13 +290,21 @@ def extract_from_html(text):
             text = insert_whitespace(children)
         if is_summary:
             if is_english_summary:
-                english_summary.append(text)
+                #english_summary.append(text)
+                __structure(simple_summary, p, text)
             elif is_simple_summary:
-                simple_summary.append(text)
+                #simple_summary.append(text)
+                __structure(simple_summary, p, text)
             else:
-                summary.append(text)
+                __structure(summary, p, text)
+                #summary.append(text)
         elif not is_table_of_c and not is_order_info:
-            full_text.append(text)
+            if full_text:
+                # is content
+                __structure(full_text, p, text)
+            else:
+                full_text = Text(text)
+            #full_text.append(text)
         #if not is_table_of_c and p.parent.name == "td":
         #    global also_tables
         #    also_tables.add(soup.head.title)
