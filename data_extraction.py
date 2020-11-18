@@ -17,7 +17,21 @@ import bs4
 # summary separate from full text?
 # remove date and place + SOU ID?
 # work with two-column format -> one case of suggested change of wording i.e. large part of the texts are really similar
- 
+
+class Paragraph:
+    """"""
+    def __init__(self):
+        self.title = None
+        self.text = None
+        
+class Text:
+    """simple text representation"""
+    def __init__(self):
+        self.title = None
+        self.content = []
+
+    
+
 def retrieve_ids(sou_csv):
     """retrieves name of pdf and/or html document"""
     pass
@@ -60,9 +74,11 @@ def _freestanding_p(tag):
     #replace (tag.parent.name != "td") by not tag.a to keep two-column instances (e.g. H8B336)
     return tag.name == "p" and not tag.a and not _is_pagenum(tag)
 
-def _internal_link(tag):
-    """filter out links that are not for navigation in the html"""
-    return tag.name == "a" and tag["href"].startswith("#page")
+def _table_of_contents(tag):
+    """filter out links that are not for navigation in the html or other paragraph elements"""
+    return (tag.name == "a" and tag["href"].startswith("#page"))\
+        or ((tag.name == "p" and tag.text.endswith(".."))\
+            or (tag.name == "p" and type(tag.next_sibling) == bs4.element.Tag and tag.next_sibling.text.endswith("..")))
 
 
 def _tables_outside_toc(tag):
@@ -107,6 +123,7 @@ def extract_from_html(text):
 
     # return variables
     summary, english_summary, simple_summary, full_text = [], [], [], []
+    #summary, english_summary, simple_summary, full_text = Text(), Text(), Text(), Text()
 
     # text segments to exclude
     first_section = ""
@@ -117,7 +134,7 @@ def extract_from_html(text):
     # hence, paragraphs can be a short title or multiple complete sentences
     paragraphs = soup.find_all(_freestanding_p)  
     
-    links = soup.find_all(_internal_link)
+    links = soup.find_all(_table_of_contents)
     tables = soup.find_all(_tables_outside_toc)
     table_types = set(tables)
     copied_tables = "".join([str(t) for t in table_types if tables.count(t) > 1])
@@ -155,7 +172,7 @@ def extract_from_html(text):
                 print("No summary")
                 break
             #print("stop", links[i], i, len(links), summary_section_nb)
-            if summary_section_nb < 0:
+            if summary_section_nb < 0 and links[i].text.strip(". ").casefold() != "sammanfattning" :
                 #print(hlink.text, links[i].text, i)
                 end_of_summary = links[i].text.strip(". ")
                 if not first_section:
@@ -176,7 +193,8 @@ def extract_from_html(text):
                 has_english_summary = True
             elif section_title.casefold() == "lättläst sammanfattning":
                 has_simple_summary = True
-            elif summary_section_nb < 0:
+            elif summary_section_nb < 0 and end_of_summary:
+                print("stop", hlink, i, f"'{end_of_summary}'")
                 break
                 
 
@@ -194,7 +212,7 @@ def extract_from_html(text):
 
     # text extraction
     for i, p in enumerate(paragraphs):
-        #print(i, p, is_summary, is_table_of_c, is_order_info, is_english_summary, is_simple_summary, first_section, file=out)
+        print(i, p, is_summary, is_table_of_c, is_order_info, is_english_summary, is_simple_summary, first_section, end_of_summary, file=out)
         if p.text.startswith("SOU och Ds kan köpas från Norstedts Juridiks kundservice."):
             is_order_info = True
         elif is_order_info:
