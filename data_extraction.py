@@ -183,7 +183,8 @@ def extract_from_html(text):
     is_summary, is_english_summary, is_simple_summary, is_appendix = False, False, False, False
     summary_section_nb, end_of_summary = 0, ""
     has_english_summary, has_simple_summary, has_appendix = True, True, False
-
+    summary_title, en_summary_title = "Sammanfattning", "Summary"
+    
     # return variables
     #summary, english_summary, simple_summary, full_text = [], [], [], []
     summary, english_summary, simple_summary, full_text = None, None, None, None
@@ -228,12 +229,12 @@ def extract_from_html(text):
         and add them to the respective Text object accordingly
         """
         font_class = re.search('class="[^"]*(ft\d+)[^"]*"', str(element))
-        print(f"_determine_structure '{font_class[1]}'",file=out)
         # if we didn't want to treat unnumbered titles as such
         # if (font_class and font_class[1] in title_classes) or\
         #(font_class and font_class in bold and re.match("\d[.\d+]*", element.text)):
 
         if font_class and font_class[1] in title_classes:
+            print(f"_determine_structure '{font_class[1]}'",file=out)
             # is title
             new_section = Section()
             new_section.title = text
@@ -259,7 +260,8 @@ def extract_from_html(text):
     for i, hlink in enumerate(links):
         if not first_section and re.match(r"[A-Za-z]+", hlink.text) and hlink.parent.name == "td":
             first_section = hlink.text.strip(". ").casefold()
-        if re.match("sammanfattning", hlink.text.casefold().strip()):
+        if re.match("\bsammanfattning\b", hlink.text.casefold().strip()):
+            summary_title = hlink.text.strip(". ")
             summary_section_nb = -1
             #print("Update summary_section_nb", summary_section_nb)
             if hlink.previous_sibling:
@@ -299,8 +301,9 @@ def extract_from_html(text):
 
             else:
                 section_title = links[i].text.strip(". ")
-            if section_title.casefold() == "summary":
+            if re.match("\bsummary\b", section_title.casefold()):
                 has_english_summary = True
+                en_summary_title = section_title
             elif section_title.casefold() == "lättläst sammanfattning":
                 has_simple_summary = True
             elif summary_section_nb < 0 and end_of_summary:
@@ -312,7 +315,7 @@ def extract_from_html(text):
         """helper function to separate summary from (simplified/English version or full report"""
         if end_of_summary and element.text.endswith(end_of_summary):
             return True
-        elif has_english_summary and element.text.casefold().endswith("summary"):
+        elif has_english_summary and re.match("\b" + en_summary_title.casefold() + "\b", element.text.casefold()):
             nonlocal is_english_summary, english_summary
             is_english_summary = True
             if not english_summary:
@@ -338,13 +341,13 @@ def extract_from_html(text):
         elif not is_table_of_c and p.text.casefold() == "innehåll":
             is_table_of_c = True
 
-        elif p.text.casefold() == "sammanfattning" and not summary:
+        elif re.match("\b" + summary_title.casefold() + "\b", p.text.casefold()) and not summary:
             is_summary = True
-            summary = Text("Sammanfattning")            
+            summary = Text(p.text)            
             is_table_of_c = False
             continue
 
-        elif f'{p["class"][-1]}">{p.text}</p></td>' in copied_tables and p["class"][-1] != "ft0":
+        elif p.has_attr("class") and f'{p["class"][-1]}">{p.text}</p></td>' in copied_tables and p["class"][-1] != "ft0":
             print("holla", file=out)
             continue
         elif is_summary and _is_end_of_summary(p):
