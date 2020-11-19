@@ -139,7 +139,7 @@ def _freestanding_p(tag):
 def _table_of_contents(tag):
     """filter out links that are not for navigation in the html or other paragraph elements"""
     return (tag.name == "a" and tag["href"].startswith("#page"))\
-        or ((tag.name == "p" and tag.text.endswith(".."))\
+        or ((tag.name in ["p","span"] and tag.text.strip().endswith(".."))\
             or (tag.name == "p" and type(tag.next_sibling) == bs4.element.Tag and tag.next_sibling.text.endswith("..")))
 
 
@@ -182,7 +182,7 @@ def extract_from_html(text):
     # text segments to distinguish
     is_summary, is_english_summary, is_simple_summary, is_appendix = False, False, False, False
     summary_section_nb, end_of_summary = 0, ""
-    has_english_summary, has_simple_summary, has_appendix = False, False, False
+    has_english_summary, has_simple_summary, has_appendix = True, True, False
 
     # return variables
     #summary, english_summary, simple_summary, full_text = [], [], [], []
@@ -198,6 +198,7 @@ def extract_from_html(text):
     paragraphs = soup.find_all(_freestanding_p)  
     
     links = soup.find_all(_table_of_contents)
+    print(len(links))
     tables = soup.find_all(_tables_outside_toc)
     table_types = set(tables)
     copied_tables = "".join([str(t) for t in table_types if tables.count(t) > 1])
@@ -208,13 +209,18 @@ def extract_from_html(text):
     #title_classes = re.findall("\.(ft\d+)\{font: +[2-9][0-9]px [^}]+\}", str(soup.style))
     ##title_classes = [el[0] if type(el)==tuple else el for el in title_classes]
     #bold = re.findall("\.(ft\d+)\{font: bold [^}]+\}", str(soup.style))
+    # create dict of types and compare to mean / max point size
     ##print([el for el in title_classes if el not in old])
-
-    title_classes = re.findall("\.(ft\d+)\{font: +(bold|[2-9][0-9]px) [^}]+\}", str(soup.style))
+    #text_font_size = re.findall("\.ft\d+\{font: +([0-9]+)px [^}]+\}", str(soup.style))
+    #mean_font_size = str(math.ceil(sum([int(el) for el in text_font_size])/len(text_font_size))+1)
+    #print(f"mean font size: {mean_font_size}")
+    title_classes = re.findall("\.(ft\d+)\{font: +(bold|[2-9][0-9]px) [^}]+\}",
+                               str(soup.style))
     title_classes = [el[0] if type(el)==tuple else el for el in title_classes]
+    
     #old = re.findall("\.(ft\d+)\{font: bold [^}]+\}", str(soup.style))
     #print([el for el in title_classes if el not in old])
-    assert title_classes, "No section headings"
+    #assert title_classes, "No section headings"
         
     def _determine_structure(text_part, element, string):
         #__structure(summary, p, text)
@@ -274,7 +280,6 @@ def extract_from_html(text):
                 #print(links[i], i, len(links))
                 i += 1
             if i >= len(links):
-                print("No summary")
                 break
             #print("stop", links[i], i, len(links), summary_section_nb)
             if summary_section_nb < 0 and links[i].text.strip(". ").casefold() != "sammanfattning" :
@@ -302,19 +307,18 @@ def extract_from_html(text):
                 print("stop", hlink, i, f"'{end_of_summary}'")
                 break
                 
-
+    print(has_english_summary, has_simple_summary, f"'{end_of_summary}'")
     def _is_end_of_summary(element):
         """helper function to separate summary from (simplified/English version or full report"""
         if end_of_summary and element.text.endswith(end_of_summary):
             return True
         elif has_english_summary and element.text.casefold().endswith("summary"):
-            nonlocal is_english_summary
+            nonlocal is_english_summary, english_summary
             is_english_summary = True
-            english_summary = Text(element.text)
-            
-
+            if not english_summary:
+                english_summary = Text(element.text)
         elif has_simple_summary and element.text.casefold().endswith("lättläst sammanfattning"):
-            nonlocal is_simple_summary
+            nonlocal is_simple_summary, simple_summary
             is_simple_summary = True
             simple_summary = Text(element.text)
 
@@ -325,7 +329,7 @@ def extract_from_html(text):
     # text extraction
     for i, p in enumerate(paragraphs):
         print(i, p, is_summary, is_table_of_c, is_order_info, is_english_summary, is_simple_summary, first_section, end_of_summary, file=out)
-        if p.text.startswith("SOU och Ds kan köpas från Norstedts Juridiks kundservice."):
+        if p.text.startswith("SOU och Ds kan köpas från "):
             is_order_info = True
         elif is_order_info:
             if p.text.startswith("ISSN"):
@@ -359,7 +363,7 @@ def extract_from_html(text):
         if is_summary:
             if is_english_summary:
                 #english_summary.append(text)
-                _determine_structure(simple_summary, p, text)
+                _determine_structure(english_summary, p, text)
             elif is_simple_summary:
                 #simple_summary.append(text)
                 _determine_structure(simple_summary, p, text)
@@ -369,15 +373,15 @@ def extract_from_html(text):
         elif not is_table_of_c and not is_order_info:
             if full_text:
                 # is content
-                print("full text", full_text == True, full_text, file=out)
+                #print("full text", full_text == True, full_text, file=out)
                 _determine_structure(full_text, p, text)
             else:
-                print("No full text", full_text == True, full_text, file=out)
+                #print("No full text", full_text == True, full_text, file=out)
                 full_text = Text(text)
             #full_text.append(text)
-        #if not is_table_of_c and p.parent.name == "td":
-        #    global also_tables
-        #    also_tables.add(soup.head.title)
+        if not is_table_of_c and p.parent.name == "td":
+            global also_tables
+            also_tables.add(soup.head.title)
     return full_text, summary, english_summary, simple_summary
 
 
