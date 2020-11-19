@@ -25,19 +25,75 @@ class Section:
         self.text = []
 
     def __repr__(self):
-        return f"Section object with title: '{self.title}', length: {len(self.text)}"
+        return f"Section object with title: '{self.title}', length: {len(self)}"
 
+    def __iter__(self):
+        for text in self.text:
+            yield text
+
+            
+    def __getitem__(self, i):
+        return self.text[i]
+
+
+    def __len__(self):
+        return len(self.text)
+
+
+    def __setitem__(self, i, v):
+        self.text[i] = v
+
+
+    def __eq__(self, other):
+        if type(other) == Section:
+            return self.title == other.title and self.text == other.text
+        return False
+
+    
+    def append(self, el):
+        self.text.append(el)
         
-class Text:
+class Text(object):
     """simple text representation"""
     def __init__(self, title):
         self.title = title
         self.content = []
 
+        
     def __repr__(self):
-        return f"Text object with title: '{self.title}', length: {len(self.content)}"
-    
+        return f"Text object with title: '{self.title}', length: {len(self)}"
 
+
+    def __iter__(self):
+        for text in self.content:
+            yield text
+
+            
+    def __getitem__(self, i):
+        return self.content[i]
+
+
+    def __len__(self):
+        return len(self.content)
+
+
+    def __setitem__(self, i, v):
+        self.content[i] = v
+
+        
+    # Set this right
+    def __bool__(self):
+        return bool(self.title)
+
+    
+    def __eq__(self, other):
+        if type(other) == Text:
+            return self.title == other.title and self.content == other.content
+        return False
+        
+    def append(self, el):
+        self.content.append(el)
+        
 def retrieve_ids(sou_csv):
     """retrieves name of pdf and/or html document"""
     pass
@@ -163,18 +219,18 @@ def extract_from_html(text):
             # is title
             new_section = Section()
             new_section.title = text
-            text_part.content.append(new_section)
+            text_part.append(new_section)
             print("new section",file=out)
         elif text != text_part.title:
             # is text body
             if text_part.content:
-                text_part.content[-1].text.append(text)
+                text_part[-1].append(text)
                 
             else:
                 # text_part is empty
                 new_section = Section()
-                new_section.text.append(text)
-                text_part.content.append(new_section)
+                new_section.append(text)
+                text_part.append(new_section)
                 
     # appendix = soup.find_all(_appendix)[0].text.strip()
     # if appendix:
@@ -301,8 +357,10 @@ def extract_from_html(text):
         elif not is_table_of_c and not is_order_info:
             if full_text:
                 # is content
+                print("full text", full_text == True, full_text, file=out)
                 __structure(full_text, p, text)
             else:
+                print("No full text", full_text == True, full_text, file=out)
                 full_text = Text(text)
             #full_text.append(text)
         #if not is_table_of_c and p.parent.name == "td":
