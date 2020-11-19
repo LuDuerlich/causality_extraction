@@ -21,7 +21,7 @@ import bs4
 class Section:
     """"""
     def __init__(self):
-        self.title = None
+        self.title = ""
         self.text = []
 
     def __repr__(self):
@@ -205,16 +205,28 @@ def extract_from_html(text):
 
 
     # find class names for section title assuming that they are all in bold font
-    title_classes = re.findall("\.(ft\d+)\{font: bold [^}]+\}", str(soup.style))
+    #title_classes = re.findall("\.(ft\d+)\{font: +[2-9][0-9]px [^}]+\}", str(soup.style))
+    ##title_classes = [el[0] if type(el)==tuple else el for el in title_classes]
+    #bold = re.findall("\.(ft\d+)\{font: bold [^}]+\}", str(soup.style))
+    ##print([el for el in title_classes if el not in old])
+
+    title_classes = re.findall("\.(ft\d+)\{font: +(bold|[2-9][0-9]px) [^}]+\}", str(soup.style))
+    title_classes = [el[0] if type(el)==tuple else el for el in title_classes]
+    #old = re.findall("\.(ft\d+)\{font: bold [^}]+\}", str(soup.style))
+    #print([el for el in title_classes if el not in old])
     assert title_classes, "No section headings"
         
-    def __structure(text_part, element, string):
+    def _determine_structure(text_part, element, string):
         #__structure(summary, p, text)
         """sort out whether an element is part of title or text body
         and add them to the respective Text object accordingly
         """
         font_class = re.search('class="[^"]*(ft\d+)[^"]*"', str(element))
-        print(f"__structure '{font_class[1]}'",file=out)
+        print(f"_determine_structure '{font_class[1]}'",file=out)
+        # if we didn't want to treat unnumbered titles as such
+        # if (font_class and font_class[1] in title_classes) or\
+        #(font_class and font_class in bold and re.match("\d[.\d+]*", element.text)):
+
         if font_class and font_class[1] in title_classes:
             # is title
             new_section = Section()
@@ -347,18 +359,18 @@ def extract_from_html(text):
         if is_summary:
             if is_english_summary:
                 #english_summary.append(text)
-                __structure(simple_summary, p, text)
+                _determine_structure(simple_summary, p, text)
             elif is_simple_summary:
                 #simple_summary.append(text)
-                __structure(simple_summary, p, text)
+                _determine_structure(simple_summary, p, text)
             else:
-                __structure(summary, p, text)
+                _determine_structure(summary, p, text)
                 #summary.append(text)
         elif not is_table_of_c and not is_order_info:
             if full_text:
                 # is content
                 print("full text", full_text == True, full_text, file=out)
-                __structure(full_text, p, text)
+                _determine_structure(full_text, p, text)
             else:
                 print("No full text", full_text == True, full_text, file=out)
                 full_text = Text(text)
@@ -372,12 +384,14 @@ def extract_from_html(text):
 def print_to_files(id_, text, summary, english_summary, simple_summary):
     if not os.path.exists("documents"):
         os.system("mkdir documents")
-    for name, content in [("ft", text), ("s", summary), ("ENs", english_summary), ("SEs", simple_summary)]:
-        if content:
+    for name, text_part in [("ft", text), ("s", summary), ("ENs", english_summary), ("SEs", simple_summary)]:
+        if text_part:
             with open(f"documents/{name}_{id_}", "w") as ofile:
-                for line in content:
-                    print(line, file=ofile)
-
+                print(f"<h1>{text_part.title}</h1>", file=ofile)
+                for section in text_part.content:
+                    print(f"<h2>{section.title}</h2>", file=ofile)
+                    for line in section.text:
+                        print(f"<p>{line}</p>", file=ofile)
                     
 #docs = extract_from_json()
 # with open("documents.pickle","rb") as ifile:
