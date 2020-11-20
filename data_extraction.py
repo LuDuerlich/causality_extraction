@@ -206,8 +206,6 @@ def extract_from_html(text):
     table_types = set(tables)
     copied_tables = "".join([str(t) for t in table_types if tables.count(t) > 1])
 
-
-
     # find class names for section title assuming that they are all in bold font
     #title_classes = re.findall("\.(ft\d+)\{font: +[2-9][0-9]px [^}]+\}", str(soup.style))
     ##title_classes = [el[0] if type(el)==tuple else el for el in title_classes]
@@ -220,6 +218,14 @@ def extract_from_html(text):
     title_classes = re.findall("\.(ft\d+)\{font: +(bold|[2-9][0-9]px) [^}]+\}",
                                str(soup.style))
     title_classes = [el[0] if type(el)==tuple else el for el in title_classes]
+    # keep track of the font size for each style
+    # title_classes = {name: value for name, value in title_classes}
+    # font_to_styles = {}
+    # for name, font in title_classes.items():
+    #     if font in font_to_styles:
+    #         font_to_styles[font].append(name)
+    #     else:
+    #         font_to_styles[font] = [name]
     
     #old = re.findall("\.(ft\d+)\{font: bold [^}]+\}", str(soup.style))
     #print([el for el in title_classes if el not in old])
@@ -236,31 +242,33 @@ def extract_from_html(text):
         # if we didn't want to treat unnumbered titles as such
         # if (font_class and font_class[1] in title_classes) or\
         #(font_class and font_class in bold and re.match("\d[.\d+]*", element.text)):
-
-        if font_class and font_class[1] in title_classes:
-            print(f"_determine_structure '{font_class[1]}'",file=out)
-            # is title
-            new_section = Section()
-            new_section.title = text
-            text_part.append(new_section)
-            print("new section",file=out)
-        elif string.strip().endswith(section_titles[0]):
-            # is title
-            new_section = Section()
-            new_section.title = text
-            text_part.append(new_section)
-            print("new section 2",file=out)
-            section_titles.pop(0)
-        elif text != text_part.title:
-            # is text body
-            if text_part.content:
-                text_part[-1].append(text)
-                
-            else:
-                # text_part is empty
+        if text_part.content and text == text_part[-1].title:
+            pass
+        else:
+            if font_class and font_class[1] in title_classes:
+                print(f"_determine_structure '{font_class[1]}'",file=out)
+                # is title
                 new_section = Section()
-                new_section.append(text)
+                new_section.title = text
                 text_part.append(new_section)
+                print("new section",file=out)
+            elif string.strip().endswith(section_titles[0]):
+                # is title
+                new_section = Section()
+                new_section.title = text
+                text_part.append(new_section)
+                print("new section 2",file=out)
+                section_titles.pop(0)
+            elif text != text_part.title:
+                # is text body
+                if text_part.content:
+                    text_part[-1].append(text)
+
+                else:
+                    # text_part is empty
+                    new_section = Section()
+                    new_section.append(text)
+                    text_part.append(new_section)
                 
     # appendix = soup.find_all(_appendix)[0].text.strip()
     # if appendix:
