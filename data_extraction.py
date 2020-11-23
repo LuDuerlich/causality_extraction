@@ -17,7 +17,9 @@ import bs4
 # summary separate from full text?
 # remove date and place + SOU ID?
 # work with two-column format -> one case of suggested change of wording i.e. large part of the texts are really similar
-
+# to fix: GPB334, 'H3B333', GVB315'
+# broken files https://data.riksdagen.se/dokument/GSB321.html
+# ignore file : GQB399d2 - GQB399d7 (just tables / figures)
 class Section:
     """"""
     def __init__(self):
@@ -138,7 +140,7 @@ def _freestanding_p(tag):
 
 def _table_of_contents(tag):
     """filter out links that are not for navigation in the html or other paragraph elements"""
-    return (tag.name == "a" and tag["href"].startswith("#page"))\
+    return (tag.name == "a" and tag.has_attr("href") and tag["href"].startswith("#page"))\
         or ((tag.name in ["p","span"] and tag.text.strip().endswith(".."))\
             or (tag.name == "p" and type(tag.next_sibling) == bs4.element.Tag and tag.next_sibling.text.endswith("..")))
 
@@ -163,27 +165,28 @@ def insert_whitespace(children):
              or (type(children[i+1]) != bs4.element.NavigableString and children[i+1].text.startswith(" "))):
              if type(child) == bs4.element.NavigableString:
                  text += f"{child} "
-             else:
+             elif type(child) == bs4.element.Tag:
                  text += f"{child.text} "
         else:
             if type(child) == bs4.element.NavigableString:
                  text += f"{child}"
-            else:
+            elif type(child) == bs4.element.Tag:
                  text += f"{child.text}"
+
     if type(children[-1]) == bs4.element.NavigableString:
         text += f"{children[-1]} "
-    else:
+    elif type(children[-1]) == bs4.element.Tag:
         text += f"{children[-1].text} "
     return text
 
 
-def extract_from_html(text):
+def extract_from_html(text, key=None):
     """extract text as list of sentences and return full text and summary"""
     # text segments to distinguish
     is_summary, is_english_summary, is_simple_summary, is_appendix = False, False, False, False
     summary_section_nb, end_of_summary = 0, ""
-    has_english_summary, has_simple_summary, has_appendix = True, True, False
-    summary_title, en_summary_title = "Sammanfattning", "Summary"
+    has_summary, has_english_summary, has_simple_summary, has_appendix = False, True, True, False
+    summary_title, en_summary_title, s_summary_title = "Sammanfattning", "Summary", "Lättläst Sammanfattning"
     section_titles = []
     
     
@@ -196,6 +199,10 @@ def extract_from_html(text):
     is_order_info, is_table_of_c = False, False
 
     soup = bs4.BeautifulSoup(requests.get(f'http:{text["content"]["dokument_url_html"]}').text)
+    if soup.find("error"):
+        global errors
+        errors.add(key)
+        return "", "", "", ""
     # there does not seem to be any difference between headings and text in the markup
     # hence, paragraphs can be a short title or multiple complete sentences
     paragraphs = soup.find_all(_freestanding_p)  
@@ -249,25 +256,30 @@ def extract_from_html(text):
                 print(f"_determine_structure '{font_class[1]}'",file=out)
                 # is title
                 new_section = Section()
-                new_section.title = text
+                new_section.title = text.strip()
                 text_part.append(new_section)
                 print("new section",file=out)
-            elif string.strip().endswith(section_titles[0]):
+            elif section_titles and string.strip().endswith(section_titles[0]):
                 # is title
                 new_section = Section()
-                new_section.title = text
+                new_section.title = text.strip()
                 text_part.append(new_section)
                 print("new section 2",file=out)
                 section_titles.pop(0)
+            # elif re.match(r"[\d.]+ *[^.!?;:]+$", string.strip()):
+            #     new_section = Section()
+            #     new_section.title = text
+            #     text_part.append(new_section)
+            #     print("new section 3",file=out)
             elif text != text_part.title:
                 # is text body
                 if text_part.content:
-                    text_part[-1].append(text)
+                    text_part[-1].append(text.strip())
 
                 else:
                     # text_part is empty
                     new_section = Section()
-                    new_section.append(text)
+                    new_section.append(text.strip())
                     text_part.append(new_section)
                 
     # appendix = soup.find_all(_appendix)[0].text.strip()
@@ -277,6 +289,7 @@ def extract_from_html(text):
     # find the name of the section following the summary
     # and determine whether there are simplified or English summaries from the table of contents
     for i, hlink in enumerate(links):
+        section_title = ""
         #print(i, hlink, summary_title, en_summary_title, end_of_summary, file=out)
         if section_titles:
             sec_title = re.match(r"[^.]+ *\.\.+$", hlink.text)
@@ -288,12 +301,13 @@ def extract_from_html(text):
         if not first_section and re.match(r"[A-Za-z]+", hlink.text) and hlink.parent.name == "td":
             print(2, file=out)
             first_section = hlink.text.strip(". ").casefold()
-        if re.match(r"\bsammanfattning\b", hlink.text.casefold().strip()):
+        if re.match(r"\bsammanfattning\b", hlink.text.casefold().strip()) and not has_summary:
             print(3, file=out)
             summary_title = hlink.text.strip(". ")
+            has_summary = True
             summary_section_nb = -1
             #print("Update summary_section_nb", summary_section_nb)
-            if hlink.previous_sibling:
+            if hlink.previous_sibling and hasattr(hlink.previous_sibling, "text"):
                 #print(f"text: '{links[i-1].text}'")
                 match = re.match("[0-9.]+", hlink.previous_sibling.text)
                 if match:
@@ -315,23 +329,24 @@ def extract_from_html(text):
                 print("stop", i, len(links), summary_section_nb, file=out)
                 break
             #print("stop", links[i], i, len(links), summary_section_nb)
-            if summary_section_nb < 0 and links[i].text.strip(". ").casefold() not in ["sammanfattning", "summary"]\
-               and not section_titles:
-                print("this one", hlink.text, links[i].text, i, file=out)
-                end_of_summary = links[i].text.strip(". ")
-                if not first_section:
-                    first_section = end_of_summary
-                section_title = end_of_summary
-                #print(f'1 "{end_of_summary}", "{summary_section_nb}"')
-            if (summary_section_nb and\
-                links[i-1].text.strip(". ").startswith(str(summary_section_nb+1))\
-                and not section_titles):
-                end_of_summary = links[i].text.strip(". ")
-                print("that one", summary_section_nb, links[i-1].text.strip(". "), summary_section_nb+1, file=out)
-                print(f'2 "{end_of_summary}" "{links[i-1]}" "{summary_section_nb}"')
-                section_title = end_of_summary
-                if not first_section:
-                    first_section = end_of_summary
+            if links[i].text.strip(". ").casefold() not in [summary_title, s_summary_title, en_summary_title]:
+                #print(summary_title, s_summary_title, en_summary_title)
+                if summary_section_nb < 0 and not section_titles:
+                    print("this one", hlink.text, links[i].text, i, file=out)
+                    end_of_summary = links[i].text.strip(". ")
+                    if not first_section:
+                        first_section = end_of_summary
+                    section_title = end_of_summary
+                    #print(f'1 "{end_of_summary}", "{summary_section_nb}"')
+                if (summary_section_nb and\
+                    links[i-1].text.strip(". ").startswith(str(summary_section_nb+1))\
+                    and not section_titles):
+                    end_of_summary = links[i].text.strip(". ")
+                    print("that one", summary_section_nb, links[i-1].text.strip(". "), summary_section_nb+1, file=out)
+                    print(f'2 "{end_of_summary}" "{links[i-1]}" "{summary_section_nb}"')
+                    section_title = end_of_summary
+                    if not first_section:
+                        first_section = end_of_summary
 
             else:
                 section_title = links[i].text.strip(". ")
@@ -339,8 +354,11 @@ def extract_from_html(text):
             if re.match(r"\bsummary\b", section_title.casefold()):
                 has_english_summary = True
                 en_summary_title = section_title
-            elif section_title.casefold() == "lättläst sammanfattning":
+                end_of_summary = ""
+            elif "lättläst" in section_title.casefold() and "sammanfattning" in section_title.casefold():
+                s_summary_title = section_title.strip(". ")
                 has_simple_summary = True
+                end_of_summary = ""
             #elif summary_section_nb < 0 and end_of_summary:
                 #print("stop", hlink, i, f"'{end_of_summary}'")
                 #break
@@ -351,21 +369,25 @@ def extract_from_html(text):
 
     print("section_titles", len(section_titles))
     print(section_titles, file=out)
-    print(has_english_summary, has_simple_summary, f"'{end_of_summary}'", f"'{summary_title}'")
+    print(has_english_summary, has_simple_summary, f"'{end_of_summary}'", f"'{summary_title}'", f"'{en_summary_title}'", f"'{s_summary_title}'")
+
     def _is_end_of_summary(element):
         """helper function to separate summary from (simplified/English version or full report"""
         if end_of_summary and element.text.endswith(end_of_summary):
-            section_titles.pop(0)
+            if section_titles:
+                section_titles.pop(0)
             return True
         elif has_english_summary and re.match(r"\b" + en_summary_title.casefold() + r"\b", element.text.casefold()):
             nonlocal is_english_summary, english_summary
             is_english_summary = True
+            print("English summary", file=out)
             if not english_summary:
-                english_summary = Text(element.text)
-        elif has_simple_summary and element.text.casefold().endswith("lättläst sammanfattning"):
+                english_summary = Text(element.text.strip(". "))
+        elif has_simple_summary and re.match(r"\b" + s_summary_title.casefold() + r"\b", element.text.casefold()):
             nonlocal is_simple_summary, simple_summary
+            print("Simple summary", file=out)
             is_simple_summary = True
-            simple_summary = Text(element.text)
+            simple_summary = Text(element.text.strip(". "))
 
             
 
@@ -373,7 +395,10 @@ def extract_from_html(text):
     
     # text extraction
     for i, p in enumerate(paragraphs):
-        #print(i, p, is_summary, is_table_of_c, is_order_info, is_english_summary, is_simple_summary, first_section, end_of_summary, file=out)
+        if p.text.rstrip().endswith("...."):
+            continue
+        print(i, p, is_summary, is_table_of_c, is_order_info, is_english_summary, is_simple_summary, first_section, end_of_summary, file=out)
+        print(summary_title.casefold(), r"\b" + re.sub(r"([[\]()])", r"\\\1", summary_title.casefold()) + r"\b", file=out)
         if p.text.startswith("SOU och Ds kan köpas från "):
             is_order_info = True
         elif is_order_info:
@@ -383,9 +408,9 @@ def extract_from_html(text):
         elif not is_table_of_c and p.text.casefold() == "innehåll":
             is_table_of_c = True
 
-        elif re.match(r"\b" + summary_title.casefold() + r"\b", p.text.casefold()) and not summary:
+        elif re.match(r"\b" + re.sub(r"([[\]()])", r"\\\1", summary_title.casefold()) + r"\b", p.text.casefold()) and not summary:
             is_summary = True
-            summary = Text(p.text)            
+            summary = Text(p.text.strip(". "))            
             is_table_of_c = False
             continue
 
@@ -426,7 +451,7 @@ def extract_from_html(text):
             #full_text.append(text)
         if not is_table_of_c and p.parent.name == "td":
             global also_tables
-            also_tables.add(soup.head.title)
+            also_tables.add(key)
     return full_text, summary, english_summary, simple_summary
 
 
