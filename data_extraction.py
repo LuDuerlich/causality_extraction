@@ -29,8 +29,8 @@ import bs4
 
 class Section:
     """"""
-    def __init__(self):
-        self.title = ""
+    def __init__(self, title=""):
+        self.title = title
         self.text = []
 
     def __repr__(self):
@@ -131,7 +131,7 @@ def extract_from_json():
 
 def _pages(tag):
     """select only divs that represent a full page"""
-    return tag.name == "div" and tag["id"].startswith("page_")
+    return tag.name == "div" and tag.has_attr("id") and tag["id"].startswith("page_")
 
 
 def _is_pagenum(tag):
@@ -147,8 +147,8 @@ def _freestanding_p(tag):
     table of contents"""
     # replace (tag.parent.name != "td") by not tag.a to keep
     # two-column instances (e.g. H8B336)
-    return tag.name in "p" and not tag.a and not _is_pagenum(tag)
-
+    # return tag.name in ["p", "span"] and not tag.a and not _is_pagenum(tag)
+    return tag.name in ["p"] and not tag.a and not _is_pagenum(tag)
 
 def _table_of_contents(tag):
     """filter out links that are not for navigation in the html or
@@ -231,11 +231,7 @@ def extract_from_html(text, key=None):
         global errors
         errors.add(key)
         return "", "", "", ""
-    # there does not seem to be any difference between headings
-    # and text in the markup. Hence, paragraphs can be a short title
-    # or multiple complete sentences
-    # trying divs over paragraphs
-    # paragraphs = soup.find_all(_freestanding_p)
+
     pages = soup.find_all(_pages)
     
     links = soup.find_all(_table_of_contents)
@@ -245,11 +241,15 @@ def extract_from_html(text, key=None):
     copied_tables = "".join([str(t) for t in
                              table_types if tables.count(t) > 1])
 
-    title_classes = re.findall("\.(ft\d+)\{font: +(bold|[2-9][0-9]px) [^}]+\}",
+    font_classes = re.findall("\.(ft\d+)\{font: +(\w+|\d+px) [^}]+\}",
                                str(soup.style))
     title_classes = [el[0] if type(el) == tuple else
-                     el for el in title_classes]
-
+                     el for el in font_classes if
+                     re.search("(bold|[2-9][0-9]px)", el[1])]
+    footer_classes = {x: y for x,y in font_classes
+                     if re.match("(1[0-2]px|[0-9]px)", y)}
+    print(footer_classes)
+    #print(title_classes)
     def _determine_structure(text_part, element, text):
         """sort out whether an element is part of title or text body
         and add them to the respective Text object accordingly
@@ -258,10 +258,6 @@ def extract_from_html(text, key=None):
         print("here", section_titles[:2], text, file=out)
         print(seen_sections, file=out)
         font_classes = re.findall('class="[^"]*(ft\d+)[^"]*"', str(element))
-        # if we didn't want to treat unnumbered titles as such
-        # if (font_class and font_class[1] in title_classes) or\
-        # (font_class and font_class in bold and re.match("\d[.\d+]*",
-        # element.text)):
 
         if text_part.content and text == text_part[-1].title\
            or element.text.strip() in seen_sections:
@@ -272,31 +268,24 @@ def extract_from_html(text, key=None):
                  == len(font_classes)):
                 print(f"_determine_structure '{font_classes}'", file=out)
                 # is title
-                new_section = Section()
-                new_section.title = text.strip()
-                text_part.append(new_section)
-                if (re.sub("^\d+ *", "", new_section.title.casefold())
+                text_part.append(Section(text.strip()))
+                if section_titles and (re.sub("^\d+ *", "", text_part[-1].title.casefold())
                     == section_titles[0].casefold()):
-                    seen_sections.append(section_titles284.pop(0))
+                    seen_sections.append(section_titles.pop(0))
                 else:
-                    seen_sections.append(new_section.title)
+                    seen_sections.append(text_part[-1].title)
+                print(2, seen_sections, file=out)
                 print(f"new section *{text.strip()}*", file=out)
             elif section_titles and\
                  text.strip().casefold().endswith(section_titles[0].casefold()):
                 # is title
-                new_section = Section()
-                new_section.title = text.strip()
-                text_part.append(new_section)
+                text_part.append(Section(text.strip()))
                 print(f"new section 2 *{text.strip()}*", file=out)
                 seen_sections.append(section_titles.pop(0))
-
-            # elif re.match(r"[\d.]+ *[^.!?;:]+$", string.strip()):
-            #     new_section = Section()
-            #     new_section.title = text
-            #     text_part.append(new_section)
-            #     print("new section 3",file=out)
+                print(3,seen_sections, file=out)
             elif text != text_part.title:
                 # is text body
+                print("is text body", file=out)
                 if text_part.content:
                     text_part[-1].append(text.strip())
 
@@ -305,11 +294,9 @@ def extract_from_html(text, key=None):
                     new_section = Section()
                     new_section.append(text.strip())
                     text_part.append(new_section)
-
-    # appendix = soup.find_all(_appendix)[0].text.strip()
-    # if appendix:
-    #     has_appendix = True
-
+                    print("new text section", text_part.content, file=out)
+            else:
+                print("other", file=out)
     # find the name of the section following the summary
     # and determine whether there are simplified or English summaries
     # from the table of contents
@@ -347,18 +334,13 @@ def extract_from_html(text, key=None):
            ((has_english_summary or has_simple_summary) and
              end_of_summary)) or not end_of_summary:
             print(4, file=out)
-            # print("this", hlink, summary_section_nb)
             i += 1
-            # print("new loop", len(links), i)
             while i < len(links) and\
                   not re.search(r"[A-Za-z]+ ?\.+", links[i].text):
-                # or links[i+1].text.strip().endswith("Sammanfattning"):
-                # print(links[i], i, len(links))
                 i += 1
             if i >= len(links):
                 print("stop", i, len(links), summary_section_nb, file=out)
                 break
-            # print("stop", links[i], i, len(links), summary_section_nb)
             if links[i].text.strip(". ").casefold() not in\
                [summary_title.casefold(), s_summary_title.casefold(),
                 en_summary_title.casefold()]:
@@ -368,7 +350,6 @@ def extract_from_html(text, key=None):
                     if not first_section:
                         first_section = end_of_summary
                     section_title = end_of_summary
-                    # print(f'1 "{end_of_summary}", "{summary_section_nb}"')
                 if (summary_section_nb and\
                     links[i-1].text.strip(". ").startswith(str(summary_section_nb+1))
                     and not section_titles):
@@ -381,7 +362,6 @@ def extract_from_html(text, key=None):
                     section_title = end_of_summary
                     if not first_section:
                         first_section = end_of_summary
-
             else:
                 section_title = links[i].text.strip(". ")
             if re.match(r"\bsummary\b", section_title.casefold()):
@@ -410,8 +390,14 @@ def extract_from_html(text, key=None):
         from (simplified/English version or full report"""
         nonlocal seen_sections
         if end_of_summary and element.text.endswith(end_of_summary):
-            if section_titles:
+            if section_titles and section_titles[0].casefold() in element.text.casefold():
+                print(section_titles[0].casefold(), file=out)
                 seen_sections.append(section_titles.pop(0))
+                print(1,seen_sections, file=out)
+            else:
+                seen_sections.append(element.text)
+            nonlocal full_text
+            full_text.append(Section(element.text))
             return True
         elif has_english_summary and\
             re.match(r"\b" + en_summary_title.casefold()
@@ -427,9 +413,24 @@ def extract_from_html(text, key=None):
             nonlocal is_simple_summary, simple_summary
             print("Simple summary", file=out)
             is_simple_summary = True
-            simple_summary = Text(element.text.strip(". "))
-            seen_sections.append(simple_summary.title)
+            if not simple_summary:
+                simple_summary = Text(element.text.strip(". "))
+                seen_sections.append(simple_summary.title)
         return False
+
+    def _footnotes(page):
+        """find and remove footnotes"""
+        def _footn_filter(tag):
+            nonlocal footer_classes
+            return tag.name == "span" and tag.has_attr("class")\
+                and tag["class"][-1] in footer_classes
+        candidates = page.find_all(_footn_filter)
+        for c in candidates:
+            if re.match("^\d+ *$", c.text):
+                if c.previous_sibling == None:
+                    print("removing element", c.parent.extract(), file=out)
+                else:
+                    print("removing element", c.extract(), file=out)
 
     def _two_columns(table):
         """detect and merge two column format"""
@@ -452,11 +453,30 @@ def extract_from_html(text, key=None):
         for element in paragraphs:
             if type(element) == bs4.element.Tag:
                 print(f"element: {element}", file=out)
+                if (element.has_attr("class") and
+                   f'{element["class"][-1]}">{element.text}</p></td>'
+                   in copied_tables and element["class"][-1] != "ft0")\
+                   or element.name == "table":
+                    print("ignoring header:", element.extract(), file=out)
+                    continue
+                elif element.parent.name in ["table", "td", "tr"]:
+                    # and\
+                        #f'{element["class"][-1]}">{element.text}</p></td>'\
+                        #in copied_tables and element["class"][-1] != "ft0":
+                    print("ignoring table:", element.parent.extract(), file=out)
+                    continue
+                # elif re.match("tabell \d", element.text.casefold()):
+                    # really messy tables e.g. GIB33
+                    # continue
+                # if (element.has_attr("class") and
+                #   f'{element["class"][-1]}' in footer_classes):
+                #       print("ignoring footer", file=out)
+                #       continue
                 text = element.text
 
                 # correct for p-elements with multiple children,
                 # e.g. consecutive spans with missing white space
-                children = list(element.children)
+                children = element.contents
                 if len(children) > 1:
                     text = insert_whitespace(children)
                 if is_summary:
@@ -464,6 +484,7 @@ def extract_from_html(text, key=None):
                         _determine_structure(english_summary, element, text)
                     elif is_simple_summary:
                         _determine_structure(simple_summary, element, text)
+                        print(simple_summary.content, file=out)
                     else:
                         _determine_structure(summary, element, text)
                 else:  # if not is_table_of_c and not is_order_info:
@@ -471,17 +492,13 @@ def extract_from_html(text, key=None):
                         _determine_structure(full_text, element, text)
                     else:
                         full_text = Text(text)
-                # if not is_table_of_c and p.parent.name == "td":
-                #     global also_tables
-                #     also_tables.add(key)
 
     print("TEXT EXTRACTION", file=out)
     # text extraction
+    _footnotes(soup)
     for page in pages:
-        print(page, file=out)
+        print("NEXT PAGE", file=out)
         for i, p in enumerate(page.children):
-            print("NEW PAGE SECTION", "*"*5, file=out)
-            print(p, file=out)
             paragraphs = False
             if hasattr(p, "find_all"):
                 if p.name == "p":
@@ -500,35 +517,39 @@ def extract_from_html(text, key=None):
                p.text.startswith("SOU och Ds kan köpas från "):
                 print(f"ignoring *{p}*", file=out)
                 break
+            print("NEW PAGE SECTION", "*"*5, file=out)
+
             if p.name == "table":
-                if not p.text.casefold().startswith("tablå")\
-                   or "tablå" in p.previous_sibling.text.casefold():
-                    print("potentially two columns", p.text, file=out)
-                    text = _two_columns(p)
-                    if text:
-                        print(text)
-                        if is_summary:
-                            if is_english_summary:
-                                english_summary[-1].extend(text)
-                            elif is_simple_summary:
-                                simple_summary[-1].extend(text)
-                            else:
-                                summary[-1].extend(text)
-                        else:
-                            full_text[-1].extend(text)
-                            continue
-                else:
-                    continue
+                print("ignoring", p.extract(), file=out)
+                # if not p.text.casefold().startswith("tablå")\
+                #    or "tablå" in p.previous_sibling.text.casefold():
+                #     print("potentially two columns", p.text, file=out)
+                #     text = _two_columns(p)
+                #     if text:
+                #         print(text)
+                #         if is_summary:
+                #             if is_english_summary:
+                #                 english_summary[-1].extend(text)
+                #             elif is_simple_summary:
+                #                 simple_summary[-1].extend(text)
+                #             else:
+                #                 summary[-1].extend(text)
+                #         else:
+                #             full_text[-1].extend(text)
+                #             continue
+                # else:
+                continue
             elif p.has_attr("class") and\
                  f'{p["class"][-1]}">{p.text}</p></td>'\
                  in copied_tables and p["class"][-1] != "ft0":
+                print("ignoring header:", p.extract())
                 continue
                     # is header / footer
 
             elif (not is_table_of_c or "...." in page.text)\
-                 and ("innehåll" in paragraphs[0].text.casefold() or
-                      (len(paragraphs) > 1 and "innehåll" in
-                       paragraphs[1].text.casefold())):
+                 and re.search(r"\binnehåll\b", paragraphs[0].text.casefold())\
+                 or (len(paragraphs) > 1 and
+                     re.search(r"\binnehåll\b", paragraphs[1].text.casefold())):
                 is_table_of_c = True
                 print(f"ignoring toc *{p}*", file=out)
                 break
@@ -550,28 +571,8 @@ def extract_from_html(text, key=None):
             if paragraphs[0].text.casefold().strip().endswith(first_section):
                 is_table_of_c = False
             _split_text_on_page(paragraphs)
-            # text = p.text
 
-            # # correct for p-elements with multiple children,
-            # # e.g. consecutive spans with missing white space
-            # children = list(p.children)
-            # if len(children) > 1:
-            #     text = insert_whitespace(children)
-            # if is_summary:
-            #     if is_english_summary:
-            #         _determine_structure(english_summary, p, text)
-            #     elif is_simple_summary:
-            #         _determine_structure(simple_summary, p, text)
-            #     else:
-            #         _determine_structure(summary, p, text)
-            # elif not is_table_of_c and not is_order_info:
-            #     if full_text:
-            #         _determine_structure(full_text, p, text)
-            #     else:
-            #         full_text = Text(text)
-            # # if not is_table_of_c and p.parent.name == "td":
-            # #     global also_tables
-            # #     also_tables.add(key)
+    # todo filter references and other lists
     return full_text, summary, english_summary, simple_summary
 
 
