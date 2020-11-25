@@ -55,7 +55,7 @@ class Section:
             return self.title == other.title and\
                 self.text == other.text
         return False
-
+        
     def append(self, el):
         self.text.append(el)
 
@@ -93,9 +93,23 @@ class Text(object):
             return self.title == other.title and self.content == other.content
         return False
 
+    def __contains__(self, el):
+        return el in [sec.title for sec in self.content]
+
     def append(self, el):
         self.content.append(el)
 
+    def remove(self, el):
+        self.content.remove(el)
+
+    def index(self, el, reverse=False):
+        if reverse:
+            return [sec.title for sec in self.content][::-1].index(el) - 1
+        return [sec.title for sec in self.content].index(el)
+
+    @property
+    def section_titles(self):
+        return [sec.title for sec in self.content]
 
 def extract_from_json():
     """extract document date, text and html locations from respective
@@ -243,32 +257,37 @@ def extract_from_html(text, key=None):
     copied_tables = "".join([str(t) for t in
                              table_types if tables.count(t) > 1])
 
-    font_classes = re.findall(r"\.(ft\d+)\{font: +(\w+|\d+px) [^}]+\}",
+    font_cl = re.findall(r"\.(ft\d+)\{font: +(\w+|\d+px) [^}]+\}",
                               str(soup.style))
-    title_classes = [el[0] if type(el) == tuple else
-                     el for el in font_classes if
-                     re.search(r"(bold|[2-9][0-9]px)", el[1])]
-    footer_classes = {x: y for x, y in font_classes
-                      if re.match(r"(1[0-2]px|[0-9]px)", y)}
+    title_st = r"(bold|[2-9][0-9]px)"
+    title_cl = [el[0] if type(el) == tuple else
+                     el for el in font_cl if
+                     re.search(title_st, el[1])]
+
+    footer_st = r"(1[0-2]px|[0-9]px)"
+    footer_cl = {x: y for x, y in font_cl
+                      if re.match(footer_st, y)}
 
     def _determine_structure(text_part, element, text):
         """sort out whether an element is part of title or text body
         and add them to the respective Text object accordingly
         """
-        nonlocal section_titles, seen_sections, text_id
+        nonlocal section_titles, seen_sections#, text_id, title_cl
         print("here", section_titles[:2], text, file=out)
-        print(seen_sections, file=out)
-        font_classes = re.findall(r'class="[^"]*(ft\d+)[^"]*"', str(element))
+        print(seen_sections[-5:], file=out)
+        font_cl = re.findall(r'class="[^"]*(ft\d+)[^"]*"', str(element))
+        st = re.findall(r'style="[^"]*font:[^":]*(\b\d+px)[^"]*"', str(element))
         if (text_part.content and text == text_part[-1].title)\
            or element.text.strip() in seen_sections[-5:]\
            or re.match(f"SOU *{text_id}", element.text.strip())\
            or re.search(f"SOU *{text_id}$", element.text.strip()):
             return
         elif not _is_pagenum(element):
-            if (font_classes and
-                len([el for el in font_classes if el in title_classes])
-                == len(font_classes)):
-                print(f"_determine_structure '{font_classes}'", file=out)
+            if (font_cl and
+                len([f for f in font_cl if f in title_cl]) == len(font_cl)) or\
+                (st and
+                 len([s for s in st if re.search(title_st, s)]) == len(st)):
+                print(f"_determine_structure '{font_cl}'", file=out)
                 # is title
                 text_part.append(Section(text.strip()))
                 if (section_titles and
@@ -426,12 +445,15 @@ def extract_from_html(text, key=None):
     def _footnotes(page):
         """find and remove footnotes"""
         def _footn_filter(tag):
-            nonlocal footer_classes
-            return tag.name == "span" and tag.has_attr("class")\
-                and tag["class"][-1] in footer_classes
+            return (tag.name in ["span", "p"] and
+                    (tag.has_attr("class") and tag["class"][-1] in
+                     footer_cl) or
+                    (tag.has_attr("style") and
+                     re.search(footer_st,tag["style"])))
+
         candidates = page.find_all(_footn_filter)
         for c in candidates:
-            if re.match(r"^\d+ *$", c.text):
+            if re.match(r"^\d+ *", c.text):
                 if c.previous_sibling is None:
                     print("removing element", c.parent.extract(), file=out)
                 else:
@@ -478,7 +500,7 @@ def extract_from_html(text, key=None):
                     # really messy tables e.g. GIB33
                     # continue
                 # if (element.has_attr("class") and
-                #   f'{element["class"][-1]}' in footer_classes):
+                #   f'{element["class"][-1]}' in footer_cl):
                 #       print("ignoring footer", file=out)
                 #       continue
                 text = element.text
@@ -565,7 +587,7 @@ def extract_from_html(text, key=None):
                 is_table_of_c = True
                 print(f"ignoring toc *{p}*", file=out)
                 break
-            elif re.match(r"\b" + re.sub(r"([[\]()])", r"\\\1",
+            elif re.match(r"\b" + re.sub(r"([\[\]\(\)])", r"\\\1",
                                          summary_title.casefold())
                           + r"\b", paragraphs[0].text.casefold())\
                     and not summary:
@@ -587,6 +609,37 @@ def extract_from_html(text, key=None):
 
     # todo filter references and other lists
     # Litteraturförteckning Källförteckning Referenser Förkortningar
+    def _filter(text, titles):
+        """filter out sections with specific titles"""
+        print(f"before: {text}")
+        filter_terms = []
+        sec_titles = text.section_titles
+        for term in titles:
+            if term in section_titles and term in text:
+                start = text.index(term)
+                stop = text.index(
+                    section_titles[section_titles.index(term) + 1])
+                print(start, stop)
+                filter_terms.extend(sec_titles[start:stop])
+                print(term, stop - start)
+            elif term in text:
+                filter_terms.append(term)
+        if filter_terms:
+            contents = list(filter(lambda x: not re.match(rf"({'|'.join(filter_terms)})",
+                                                          x.title), text.content))
+            text.content = contents
+        print("filtering", filter_terms)
+        print(f"after: {text}")
+
+    _filter(full_text, ["Litteraturförteckning",
+                        "Källförteckning",
+                        "Referenser",
+                        "Förkortningar",
+                        f"Statens offentliga utredningar\
+                        {text_id.split(':')[0]}"])
+    print(seen_sections, file=out)
+    print(section_titles, file=out)
+    # Todo match to section titles to also discard subsections
     return full_text, summary, english_summary, simple_summary
 
 
@@ -605,8 +658,8 @@ def print_to_files(id_, text, summary, english_summary, simple_summary):
 
 
 # docs = extract_from_json()
-# with open("documents.pickle","rb") as ifile:
-# docs = pickle.load(ifile)
+with open("documents.pickle","rb") as ifile:
+    docs = pickle.load(ifile)
 # ft, s = extract_from_html(docs["H8B36"])
 # len(ft) # 2028
 # for key in list(docs.keys())[:10]:
