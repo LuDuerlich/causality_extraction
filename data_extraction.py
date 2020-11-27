@@ -6,6 +6,7 @@ import os
 import pickle
 import bs4
 import logging
+from langdetect import detect
 
 # name format is sou_<year>_<id>.pdf or column 1 for html
 # (check column 7 and 16 for sou with multiple parts at
@@ -30,8 +31,9 @@ import logging
 
 class Section:
     """"""
-    def __init__(self, title=""):
+    def __init__(self, title="", lang="sv"):
         self.title = title
+        self.lang = lang
         self.text = []
 
     def __repr__(self):
@@ -58,17 +60,34 @@ class Section:
         return False
 
     def append(self, el):
-        self.text.append(el)
+        if self.check_lang(el):
+            self.text.append(el)
 
     def extend(self, el):
         self.text.extend(el)
 
+    def pop(self, index):
+        self.text.pop(index)
+
+    def check_lang(self, el):
+        if re.search(r"\w", el) and len(el.strip().split()) > 2:
+            if self.lang == detect(el):
+                return True
+            else:
+                logging.warning(
+                    "text does not match section " +
+                    f"language {self.lang}: '{el}'")
+                return False
+        else:
+            return True
+
 
 class Text(object):
     """simple text representation"""
-    def __init__(self, title):
+    def __init__(self, title, lang="sv"):
         self.title = title
         self.content = []
+        self.lang = lang
 
     def __repr__(self):
         return f"Text object with title: '{self.title}', length: {len(self)}"
@@ -107,6 +126,18 @@ class Text(object):
         if reverse:
             return [sec.title for sec in self.content][::-1].index(el) - 1
         return [sec.title for sec in self.content].index(el)
+
+    def check_lang(self, el):
+        if re.search(r"\w", el) and len(el.strip().split()) > 2:
+            if self.lang == detect(el):
+                return True
+            else:
+                logging.warning(
+                    "section title does not match text " +
+                    f"language {self.lang}: '{el}'")
+                return False
+        else:
+            return True
 
     @property
     def section_titles(self):
@@ -223,6 +254,24 @@ def insert_whitespace(children):
     return text
 
 
+def merge_paragraphs(section):
+    if hasattr(section, "text"):
+        section = section.text
+    i = 0
+    logging.info(f"section length before merge {len(section)}")
+    while (i + 1) < len(section):
+        if section[i][-1] not in '!;.?"':
+            if (not section[i+1][0].isupper() and
+                not section[i+1].startswith("•")):
+                section[i] += f" {section.pop(i+1).lstrip()}"
+            else:
+                i += 1
+        else:
+            i += 1
+
+    logging.info(f"section length after merge {len(section)}")
+
+    
 def extract_from_html(text, key=None):
     """extract text as list of sentences and return full text and summary"""
     # text segments to distinguish
@@ -299,7 +348,12 @@ def extract_from_html(text, key=None):
                 logging.debug(f"comparing font class '{font_cl}' with title " +
                 "style and known classes.")
                 # is title
-                text_part.append(Section(text.strip()))
+                if text_part.content:
+                    logging.debug("merging paragraphs in last section")
+                    merge_paragraphs(text_part[-1])
+                if text_part.check_lang(text.strip()):
+                    text_part.append(Section(text.strip(),
+                                             lang=text_part.lang))
                 if (section_titles and
                     (re.sub(r"^\d+ *", "", text_part[-1].title.casefold())
                      == section_titles[0].casefold())):
@@ -311,9 +365,10 @@ def extract_from_html(text, key=None):
                 {len(seen_sections)} (cond 1)
                 (the last 5 titles are {seen_sections}).""")
             elif (section_titles and text.strip().casefold()
-                  .endswith(section_titles[0].casefold())):
+                  .endswith(section_titles[0].casefold()) and
+                  text_part.check_lang(text.strip())):
                 # is title
-                text_part.append(Section(text.strip()))
+                text_part.append(Section(text.strip(), lang=text_part.lang))
                 logging.info(f"added new section '{text.strip()}'")
                 seen_sections.append(section_titles.pop(0))
                 logging.debug(f"""updated seen_sections to length\
@@ -323,9 +378,9 @@ def extract_from_html(text, key=None):
                 logging.debug("element is in text body")
                 if text_part.content:
                     text_part[-1].append(text.strip())
-                else:
+                elif text_part.check_lang(text.strip()):
                     logging.debug(f"text_part {text_part.title} is empty")
-                    new_section = Section()
+                    new_section = Section(lang=text_part.lang)
                     new_section.append(text.strip())
                     text_part.append(new_section)
                     logging.info(f"""added text to new section
@@ -339,8 +394,8 @@ def extract_from_html(text, key=None):
     logging.info("extracting links / table of contents")
     for i, hlink in enumerate(links):
         section_title = ""
-        logging.debug(f"""current state: at index {i}:.{hlink}; 
-        summary_title: {summary_title}, 
+        logging.debug(f"""current state: at index {i}:.{hlink};
+        summary_title: {summary_title},
         end_of_summary: {end_of_summary}""")
         if section_titles:
             sec_title = re.match(r"[^.]+ *\.\.+$", hlink.text)
@@ -376,9 +431,9 @@ def extract_from_html(text, key=None):
                    re.search(r"[A-Za-z]+ ?\.+", links[i].text)):
                 i += 1
             if i >= len(links):
-                logging.debug(f"looped through all links and found " +
+                logging.debug("looped through all links and found " +
                               "no candidates (index {i}, " +
-                              "list of length {len(links)}")
+                              f"list of length {len(links)}")
                 break
             if (links[i].text.strip(". ").casefold() not in
                 [summary_title.casefold(), s_summary_title.casefold(),
@@ -395,7 +450,7 @@ def extract_from_html(text, key=None):
                     and not section_titles):
                     end_of_summary = links[i].text.strip(". ")
                     logging.debug(f"""end_of_summary and summary_section_nb
-                    identified as: '{links[i].text.lstrip('. ')}'; 
+                    identified as: '{links[i].text.lstrip('. ')}';
                     {summary_section_nb}""")
                     section_title = end_of_summary
                     if not first_section:
@@ -435,14 +490,15 @@ def extract_from_html(text, key=None):
         if end_of_summary and element.text.endswith(end_of_summary):
             if section_titles and section_titles[0].casefold()\
                in element.text.casefold():
-                logging.debug(f"found section title: " +
-                              "{section_titles[0].casefold()}")
+                logging.debug("found section title: " +
+                              f"{section_titles[0].casefold()}")
                 seen_sections.append(section_titles.pop(0))
                 logging.debug(f"update seen sections {seen_sections}")
             else:
                 seen_sections.append(element.text)
             nonlocal full_text
-            full_text.append(Section(element.text))
+            if full_text.check_lang(element.text.strip()):
+                full_text.append(Section(element.text))
             return True
         elif has_english_summary and\
             re.match(r"\b" + en_summary_title.casefold()
@@ -451,7 +507,7 @@ def extract_from_html(text, key=None):
             is_english_summary = True
             logging.info(f"found English summary")
             if not english_summary:
-                english_summary = Text(element.text.strip(". "))
+                english_summary = Text(element.text.strip(". "), lang="en")
                 seen_sections.append(english_summary.title)
         elif has_simple_summary and re.match(r"\b" + s_summary_title.casefold()
                                              + r"\b", element.text.casefold()):
@@ -547,8 +603,8 @@ def extract_from_html(text, key=None):
                 else:
                     paragraphs = p.find_all(_freestanding_p)
 
-            logging.debug(f"identified " +
-                          "{len(paragraphs) if paragraphs else 'no'}" +
+            logging.debug("identified " +
+                          f"{len(paragraphs) if paragraphs else 'no'}" +
                           "paragraphs under current element")
             if not paragraphs or not p:
                 continue
@@ -617,24 +673,25 @@ def extract_from_html(text, key=None):
                 start = text.index(term)
                 stop = text.index(
                     section_titles[section_titles.index(term) + 1])
-                logging.debug(f"discarding {stop - start}elements " +
-                "from sections {start} to {stop} starting at title {term}")
+                logging.debug(f"discarding {stop - start} elements " +
+                f"from sections {start} to {stop} starting at title {term}")
                 filter_terms.extend(sec_titles[start:stop])
             elif term in text:
                 filter_terms.append(term)
         if filter_terms:
+            logging.debug(
+                f"filtering out the following sections: {filter_terms}")
             contents = list(filter(lambda x: not
                                    re.match(rf"({'|'.join(filter_terms)})",
                                             x.title), text.content))
             text.content = contents
         logging.info(f"Text after filtering: {text}")
-
     _filter(full_text, ["Litteraturförteckning",
                         "Källförteckning",
                         "Referenser",
                         "Förkortningar",
-                        f"Statens offentliga utredningar\
-                        {text_id.split(':')[0]}"])
+                        "Statens offentliga utredningar " +\
+                        text_id.split(':')[0].strip()])
     # Todo match to section titles to also discard subsections
     return full_text, summary, english_summary, simple_summary
 
@@ -655,7 +712,7 @@ def print_to_files(id_, text, summary, english_summary, simple_summary):
 
 logging.basicConfig(filename="extraction.log",
                     filemode="w",
-                    level=logging.INFO  # DEBUG)
+                    level=logging.DEBUG
                     )
 # docs = extract_from_json()
 with open("documents.pickle", "rb") as ifile:
@@ -678,3 +735,4 @@ def run_example(key):
         ft, s, es, ss = extract_from_html(docs[key])
     print_to_files(key, ft, s, es, ss)
     print(ft)
+ 
