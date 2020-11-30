@@ -70,7 +70,7 @@ class Section:
         self.text.pop(index)
 
     def check_lang(self, el):
-        if re.search(r"\w", el) and len(el.strip().split()) > 2:
+        if re.search(r"[^\d\W]", el) and len(el.strip().split()) > 3:
             if self.lang == detect(el):
                 return True
             else:
@@ -128,7 +128,7 @@ class Text(object):
         return [sec.title for sec in self.content].index(el)
 
     def check_lang(self, el):
-        if re.search(r"\w", el) and len(el.strip().split()) > 2:
+        if re.search(r"[^\d\W]", el) and len(el.strip().split()) > 3:
             if self.lang == detect(el):
                 return True
             else:
@@ -253,6 +253,18 @@ def insert_whitespace(children):
         text += f"{children[-1].text} "
     return text
 
+def merge_hyphenation(string):
+    logging.debug("merging hyphenation for string of length "
+                  + str(len(string)))
+    candidates = re.findall(r"((\b\w+)- +(\b\w+\b))", string)
+    for original, tok1, tok2 in candidates:
+        if tok2.casefold() not in ["och", "eller"]:
+            replacement = tok1 + tok2
+            if tok2[0]*2 == tok1[-2:]:
+                replacement = tok1 + tok2[1:]
+            string = string.replace(original, replacement)
+    logging.debug(f"new length: {len(string)}")
+    return string
 
 def merge_paragraphs(section):
     if hasattr(section, "text"):
@@ -268,7 +280,8 @@ def merge_paragraphs(section):
                 i += 1
         else:
             i += 1
-
+    for i, p in enumerate(section):
+        section[i] = merge_hyphenation(p)
     logging.info(f"section length after merge {len(section)}")
 
     
@@ -314,7 +327,7 @@ def extract_from_html(text, key=None):
 
     font_cl = re.findall(r"\.(ft\d+)\{font: +(\w+|\d+px) [^}]+\}",
                               str(soup.style))
-    title_st = r"(bold|[2-9][0-9]px)"
+    title_st = r"(bold|[2-9][0-9]px|1[6-9]px)"
     title_cl = [el[0] if type(el) == tuple else
                      el for el in font_cl if
                      re.search(title_st, el[1])]
@@ -361,9 +374,9 @@ def extract_from_html(text, key=None):
                 else:
                     seen_sections.append(text_part[-1].title)
                 logging.info(f"added new section '{text.strip()}'")
-                logging.debug(f"""updated seen_sections to length\
-                {len(seen_sections)} (cond 1)
-                (the last 5 titles are {seen_sections}).""")
+                logging.debug("updated seen_sections to length " +
+                              f"{len(seen_sections)} (cond 1) " +
+                              f"(the last 5 titles are {seen_sections}).")
             elif (section_titles and text.strip().casefold()
                   .endswith(section_titles[0].casefold()) and
                   text_part.check_lang(text.strip())):
@@ -371,9 +384,9 @@ def extract_from_html(text, key=None):
                 text_part.append(Section(text.strip(), lang=text_part.lang))
                 logging.info(f"added new section '{text.strip()}'")
                 seen_sections.append(section_titles.pop(0))
-                logging.debug(f"""updated seen_sections to length\
-                {len(seen_sections)} (cond 2)
-                (the last 5 titles are {seen_sections}).""")
+                logging.debug("updated seen_sections to length " +
+                              f"{len(seen_sections)} (cond 2) " +
+                              f"(the last 5 titles are {seen_sections}).")
             elif text != text_part.title:
                 logging.debug("element is in text body")
                 if text_part.content:
@@ -471,7 +484,9 @@ def extract_from_html(text, key=None):
 
             section_titles.append(end_of_summary)
         logging.debug("-"*15)
-
+    if not end_of_summary:
+        logging.debug(f"Setting default title for end_of_summary")
+        end_of_summary = "Författningsförslag"
     logging.info(f"indentified {len(section_titles)} section titles based " +
     "on table of contents")
     logging.debug(section_titles)
@@ -486,8 +501,9 @@ def extract_from_html(text, key=None):
     def _is_end_of_summary(element):
         """helper function to separate summary
         from (simplified/English version or full report"""
-        nonlocal seen_sections
-        if end_of_summary and element.text.endswith(end_of_summary):
+        nonlocal seen_sections, is_simple_summary, simple_summary,\
+            is_english_summary, english_summary, summary, full_text
+        if end_of_summary and element.text.casefold().endswith(end_of_summary.casefold()):
             if section_titles and section_titles[0].casefold()\
                in element.text.casefold():
                 logging.debug("found section title: " +
@@ -496,22 +512,31 @@ def extract_from_html(text, key=None):
                 logging.debug(f"update seen sections {seen_sections}")
             else:
                 seen_sections.append(element.text)
-            nonlocal full_text
             if full_text.check_lang(element.text.strip()):
                 full_text.append(Section(element.text))
             return True
         elif has_english_summary and\
             re.match(r"\b" + en_summary_title.casefold()
                      + r"\b", element.text.casefold()):
-            nonlocal is_english_summary, english_summary
             is_english_summary = True
+            if simple_summary and simple_summary.content:
+                merge_paragraphs(simple_summary[-1])
+            elif summary and summary.content:
+                merge_paragraphs(summary[-1])
+            elif full_text and full_text.content:
+                merge_paragraphs(full_text[-1])
             logging.info(f"found English summary")
             if not english_summary:
                 english_summary = Text(element.text.strip(". "), lang="en")
                 seen_sections.append(english_summary.title)
         elif has_simple_summary and re.match(r"\b" + s_summary_title.casefold()
                                              + r"\b", element.text.casefold()):
-            nonlocal is_simple_summary, simple_summary
+            if english_summary:
+                merge_paragraphs(simple_summary[-1])
+            elif summary:
+                merge_paragraphs(summary[-1])
+            elif full_text:
+                merge_paragraphs(full_text[-1])
             logging.info(f"found simple summary")
             is_simple_summary = True
             if not simple_summary:
@@ -605,7 +630,7 @@ def extract_from_html(text, key=None):
 
             logging.debug("identified " +
                           f"{len(paragraphs) if paragraphs else 'no'}" +
-                          "paragraphs under current element")
+                          " paragraphs under current element")
             if not paragraphs or not p:
                 continue
             logging.debug(f"""current state:
@@ -614,8 +639,8 @@ def extract_from_html(text, key=None):
             is summary: {is_summary}
             is English summary: {is_english_summary}
             is simple summary: {is_simple_summary}
-            first section: {first_section}
-            end of summary: {end_of_summary}""")
+            first section: '{first_section}'
+            end of summary: '{end_of_summary}'""")
             if p.text.rstrip().endswith("....") or\
                p.text.startswith("SOU och Ds kan köpas från "):
                 logging.debug(f"skipping paragraph: {p}")
@@ -646,6 +671,8 @@ def extract_from_html(text, key=None):
                           + r"\b", paragraphs[0].text.casefold())\
                     and not summary:
                 is_summary = True
+                if full_text and full_text.content:
+                    merge_paragraphs(full_text[-1])
                 summary = Text(paragraphs[0].text.strip(". "))
                 seen_sections.append(summary.title)
                 paragraphs.pop(0)
@@ -671,8 +698,15 @@ def extract_from_html(text, key=None):
         for term in titles:
             if term in section_titles and term in text:
                 start = text.index(term)
-                stop = text.index(
-                    section_titles[section_titles.index(term) + 1])
+                stop_term_id = section_titles.index(term) + 1
+                if stop_term_id < len(section_titles):
+                    if (section_titles[stop_term_id] in text):
+                        stop = text.index(
+                            section_titles[stop_term_id])
+                    elif start < (len(sec_titles) + 1):
+                            stop = start + 1
+                else:
+                    stop = len(sec_titles) - 1
                 logging.debug(f"discarding {stop - start} elements " +
                 f"from sections {start} to {stop} starting at title {term}")
                 filter_terms.extend(sec_titles[start:stop])
@@ -686,12 +720,17 @@ def extract_from_html(text, key=None):
                                             x.title), text.content))
             text.content = contents
         logging.info(f"Text after filtering: {text}")
-    _filter(full_text, ["Litteraturförteckning",
-                        "Källförteckning",
-                        "Referenser",
-                        "Förkortningar",
-                        "Statens offentliga utredningar " +\
-                        text_id.split(':')[0].strip()])
+    if full_text:
+        _filter(full_text, ["Innehållsförteckning",
+                            "Innehåll",
+                            "Litteraturförteckning",
+                            "Tabellförteckning",
+                            "Förteckning över tabeller och diagram",
+                            "Källförteckning",
+                            "Referenser",
+                            "Förkortningar",
+                            "Statens offentliga utredningar " +\
+                            text_id.split(':')[0].strip()])
     # Todo match to section titles to also discard subsections
     return full_text, summary, english_summary, simple_summary
 
@@ -713,6 +752,7 @@ def print_to_files(id_, text, summary, english_summary, simple_summary):
 logging.basicConfig(filename="extraction.log",
                     filemode="w",
                     level=logging.DEBUG
+                    #level=logging.INFO
                     )
 # docs = extract_from_json()
 with open("documents.pickle", "rb") as ifile:
@@ -731,8 +771,7 @@ with open("documents.pickle", "rb") as ifile:
 
 def run_example(key):
     global docs
-    with open("output_examples", "w") as out:
-        ft, s, es, ss = extract_from_html(docs[key])
+    ft, s, es, ss = extract_from_html(docs[key])
     print_to_files(key, ft, s, es, ss)
     print(ft)
  
