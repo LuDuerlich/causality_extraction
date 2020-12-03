@@ -291,8 +291,8 @@ def merge_hyphenation(string):
 
 
 def merge_title(sec1, sec2):
-    if sec1.title.split()[-1].islower() and\
-       sec2.title[0] not in "0123456789":
+    if sec1.title and sec1.title.split()[-1].islower() and\
+       sec2.title and sec2.title[0] not in "0123456789":
         sec2.title = f"{sec1.title} {sec2.title}"
         logging.debug(f"removing {sec1}")
         return True
@@ -339,8 +339,8 @@ def extract_from_html(text, key=None):
     is_order_info, is_table_of_c = False, False
 
     soup = bs4.BeautifulSoup(
-        requests.get(f'http:{text["content"]["dokument_url_html"]}').text,
-        parser="lxml")
+        requests.get(f'http:{text["content"]["dokument_url_html"]}').text)  #,
+        # parser="lxml")
     text_id = re.search(r"\d{4}:\d+", text["titel"])[0]
     logging.info(f"title: {text_id}")
     if soup.find("error"):
@@ -569,7 +569,7 @@ def extract_from_html(text, key=None):
         elif has_simple_summary and re.match(r"\b" + s_summary_title.casefold()
                                              + r"\b", element.text.casefold()):
             if english_summary:
-                merge_paragraphs(simple_summary[-1])
+                merge_paragraphs(english_summary[-1])
             elif summary:
                 merge_paragraphs(summary[-1])
             elif full_text:
