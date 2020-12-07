@@ -2,6 +2,7 @@ import re
 import sys
 sys.path.append("/Users/luidu652/Documents/causality_extraction/")
 from data_extraction import Text
+from search_terms import terms
 # sys.path.append("/Users/luidu652/Documents/causality_extraction/whoosh/src/")
 from whoosh.fields import Schema, TEXT, KEYWORD, ID, STORED, NGRAM
 from whoosh.qparser import QueryParser
@@ -383,7 +384,7 @@ def create_index(path="test_index/", ixname="test"):
 ix = index.open_dir("test_index", indexname="test")
 
 
-def print_to_file():
+def print_to_file(terms=[""]):
     qp = QueryParser("body", schema=ix.schema)
     sentf = MySentenceFragmenter(maxchars=1000, context_size=3)
     formatter = MyFormatter(between="\n...")
@@ -393,24 +394,28 @@ def print_to_file():
     with ix.searcher() as s,\
          open("example_queries.xml", "w") as output:
         print("<xml>", file=output)
-        for _query in ["orsak",
-                       "\"bidrar till\"",
-                       "\"på grund av\""]:
+        for term in terms:
+            if term:
+                _query = f"{term} AND ({' OR '.join(search_terms)})"
+            else:
+                _query = ' OR '.join(search_terms)
+                # ["orsak", "\"bidrar till\"", "\"på grund av\""]
             print(f"<query term='{_query}'>", file=output)
             parsed_query = qp.parse(_query)
             r = s.search(parsed_query, terms=True, limit=None)
-            for matched_s in r:
+            for i, matched_s in enumerate(r):
                 matched_s.results.order = highlight.FIRST
-                print(f"<match doc='{strip_tags(matched_s['doc_title'])}' " +
+                print(f"<match match_nb='{i}'",
+                      f"doc='{strip_tags(matched_s['doc_title'])}'",
                       f"section='{matched_s['sec_title']}'>",
                       file=output)
                 hits = highlighter.highlight_hit(
                     matched_s, "body",
                     top=len(matched_s.results),
-                    strict_phrase=_query.startswith('"'))
-                for i, hit in enumerate(hits):
-                    print(f"<hit hit_nb='{i}'>", file=output)
-                    print(hit, file=output)
+                    strict_phrase='"' in _query)
+                for j, hit in enumerate(hits):
+                    print(f"<hit hit_nb='{j}'>", file=output)
+                    print(re.sub("&", "&amp;", hit), file=output)
                     print("</hit>", file=output)
                 print("</match>", file=output)
             print("</query>", file=output)
