@@ -161,6 +161,27 @@ class Text(object):
         else:
             return True
 
+    def from_html(self, path):
+        with open(path) as ifile:
+            doc = ifile.read()
+        soup = bs4.BeautifulSoup(doc)
+        if soup.h1:
+            self.title = soup.h1.text
+        current_el = soup.h1.next_element
+        current_section = Section()
+        while current_el.next_element:
+            if current_el.name == "h2":
+                if current_section.title or current_section.text:
+                    self.content.append(current_section)
+                    current_section = Section(current_el.text)
+                else:
+                    current_section.title = current_el.text
+            if current_el.name == "p":
+                current_section.text.append(current_el.text)
+            current_el = current_el.next_element
+        if current_section.title or current_section.text:
+            self.content.append(current_section)
+
     @property
     def section_titles(self):
         return [sec.title for sec in self.content]
@@ -801,19 +822,8 @@ logging.basicConfig(filename="extraction.log",
                     # level=logging.DEBUG
                     level=logging.INFO
                     )
-# docs = extract_from_json()
 with open("documents.pickle", "rb") as ifile:
     docs = pickle.load(ifile)
-# ft, s = extract_from_html(docs["H8B36"])
-# len(ft) # 2028
-# for key in list(docs.keys())[:10]:
-# ft, s, es, ss =  extract_from_html(docs[key])
-# print_to_files(key, ft, s, es, ss)
-# verify that the full text begins where we want it to start
-# (often Författningsförslag / Inledning)
-# Text object with title: 'Sammanfattning', length: 15
-# Text object with title: 'Ett nationellt sammanhållet
-# system för kunskapsbaserad vård', length: 365
 
 
 def run_example(key):
