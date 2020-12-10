@@ -3,22 +3,23 @@ import re, sys
 from whoosh import index, query, fields, analysis
 from whoosh.util.testing import TempIndex
 from whoosh.qparser import QueryParser
-from test import MyFormatter, MySentenceFragmenter
+from whoosh.highlight import Highlighter
+from test import MyFormatter, MySentenceFragmenter, BasicTokenizer
 
 text = """This is a sentence. Here's another one. How about some abbreviations, \
 e.g. 'etc.' or 'et. al.'? How will this text end? We are about to find out. \
 Maybe this can be the final sentence."""
-analyzer = analysis.StandardAnalyzer(stoplist=[])
-schema = fields.Schema(doc_title=fields.TEXT(stored=True),
-                       sec_title=fields.TEXT(stored=True),
-                       body=fields.TEXT(analyzer, stored=True, phrase=True))
-sf = MySentenceFragmenter()
-formatter = MyFormatter()
-highlighter = Highlighter(fragmenter=sf, formatter=formatter)
-qp = QueryParser("body", schema=schema)
 
 
-def search(query_string):
+def search(query_string, analyzer=analysis.StandardAnalyzer(stoplist=[])):
+    schema = fields.Schema(doc_title=fields.TEXT(stored=True),
+                           sec_title=fields.TEXT(stored=True),
+                           body=fields.TEXT(analyzer, stored=True, phrase=True))
+    sf = MySentenceFragmenter()
+    formatter = MyFormatter()
+    highlighter = Highlighter(fragmenter=sf, formatter=formatter, analyzer=analyzer)
+    qp = QueryParser("body", schema=schema)
+
     results = []
     with TempIndex(schema) as ix:
         w = ix.writer()
@@ -31,40 +32,76 @@ def search(query_string):
             for hit in result:
                 res = f"<match doc='{hit['doc_title']}' "
                 res += f"section='{hit['sec_title']}'>"
-                for s in highlighter.highlight_hit(hit,"body"):
+                for s in highlighter.highlight_hit(hit,"body", strict_phrase='"' in query_string):
                     res += f"<hit>{s}</hit>"
                 res += "</match>"
                 results.append(res)
     return results
 
-def _test_query(terms, res):
+def _test_query(terms, res, analyzer=analysis.StandardAnalyzer(stoplist=[])):
     for i, query in enumerate(terms):
         current_query = f"<query term='{query}'>"
-        results = search(query)
+        results = search(query, analyzer)
         for r in results:
             current_query += r
         current_query += "</query>"
+
         # check that text segments are highligted correctly
         assert res[i]["match_s"] in current_query
         # check that text segments are not duplicated or removed
         assert res[i]["full_match"] == current_query
     
-def test_single_term():
-    q1_sent = "<em><b>This</b> is a sentence.</em>"
-    q1_match = "<query term='this'><match doc='doc1' section='sec1'><hit><em><b>This</b> is a sentence.</em> \
-Here's another one.</hit><hit>or 'et. al.'? <em>How will <b>this</b> text end?</em> We are about to find out.\
- Maybe this can be the final sentence.</hit><hit>How will this text end? We are about to find out. <em>Maybe \
+def _single_term(analyzer=None):
+    # StandardAnalyzer handles punctuation differently
+    if not analyzer:
+        analyzer = analysis.StandardAnalyzer(stoplist=[])
+        terms = ['this', 'etc.']
+        q1_match = "<query term='this'><match doc='doc1' section='sec1'><hit><em><b>This</b> is a sentence.</em> \
+Here's another one.</hit><hit>or 'et. al.'? <em>How will <b>this</b> text end?</em> We are about to find out. \
+Maybe this can be the final sentence.</hit><hit>How will this text end? We are about to find out. <em>Maybe \
 <b>this</b> can be the final sentence.</em></hit></match></query>"
-    q2_sent = "<em><b>etc</b>.</em>"
-    q2_match = "<query term='etc.'><match doc='doc1' section='sec1'><hit>Here's another one. How about some a\
+        q2_match = "<query term='etc.'><match doc='doc1' section='sec1'><hit>Here's another one. How about some a\
 bbreviations, e.g. '<em><b>etc</b>.</em>' or 'et.</hit></match></query>"
-    _test_query(['this', 'etc.'],
+        q1_sent = "<em><b>This</b> is a sentence.</em>"
+        q2_sent = "<em><b>etc</b>.</em>"
+
+    else:
+        terms = ['this', '"etc."']
+        q1_match = "<query term='this'><match doc='doc1' section='sec1'><hit><em><b>This</b> is a sentence.</em> \
+Here's another one.</hit><hit>al.'? <em>How will <b>this</b> text end?</em> We are about to find \
+out. Maybe this can be the final sentence.</hit><hit>How will this text end? We are about to find out. <e\
+m>Maybe <b>this</b> can be the final sentence.</em></hit></match></query>"
+        q2_match = "<query term='\"etc.\"'><match doc='doc1' section='sec1'><hit>How about some abbreviations,\
+ e.g. <em>'<b>etc.</b>' or 'et.</em> al.</hit></match></query>"
+        q1_sent = "<em><b>This</b> is a sentence.</em>"
+        q2_sent = "<em>'<b>etc.</b>' or 'et.</em>"
+    _test_query(terms,
             [{"match_s": q1_sent, "full_match": q1_match},
-             {"match_s": q2_sent, "full_match": q2_match}])
+             {"match_s": q2_sent, "full_match": q2_match}], analyzer)
+
+def _multiple_terms(analyzer=None):
+    if not analyzer:
+        analyzer = analysis.StandardAnalyzer(stoplist=[])
+
+        _test_query(['how about'],
+                    [{"match_s":
+                      "<em><b>How</b> <b>about</b> some abbreviations, e.g.</em>",
+                      "full_match":
+                      """<query term='how about'><match doc='doc1' section='sec1'><hit>This is a sentence. Here's another one. <em><b>How</b> <b>about</b> some abbreviations, e.g.</em> 'etc.</hit><hit>or 'et. al.'? <em><b>How</b> will this text end?</em> We are about to find out. Maybe this can be the final sentence.</hit><hit>al.'? How will this text end? <em>We are <b>about</b> to find out.</em> Maybe this can be the final sentence.</hit></match></query>"""}], analyzer)
+    else:
+        _test_query(['how about'],
+                    [{"match_s":
+                      "<em><b>How</b> <b>about</b> some abbreviations, e.</em>",
+                      "full_match":
+                      """<query term='how about'><match doc='doc1' section='sec1'><hit>This is a sentence. Here's another one. <em><b>How</b> <b>about</b> some abbreviations, e.</em>g.</hit><hit>al.'? <em><b>How</b> will this text end?</em> We are about to find out. Maybe this can be the final sentence.</hit><hit>'? How will this text end? <em>We are <b>about</b> to find out.</em> Maybe this can be the final sentence.</hit></match></query>"""}], analyzer)
+
+def test_single_term():
+    _single_term()
 
 def test_multiple_terms():
-    _test_query(['"how about"'],
-                [{"match_s":
-                  "<em><b>How</b> <b>about</b> some abbreviations, e.g.</em>",
-                  "full_match":
-                  """<query term='"how about"'><match doc='doc1' section='sec1'><hit>This is a sentence. Here's another one. <em><b>How</b> <b>about</b> some abbreviations, e.g.</em> 'etc.</hit><hit>or 'et. al.'? <em><b>How</b> will this text end?</em> We are about to find out. Maybe this can be the final sentence.</hit><hit>al.'? How will this text end? <em>We are <b>about</b> to find out.</em> Maybe this can be the final sentence.</hit></match></query>"""}])
+    _multiple_terms()
+
+def test_custom_tokeniser():
+    analyzer = BasicTokenizer(do_lower_case=False) | analysis.LowercaseFilter()
+    _single_term(analyzer)
+    _multiple_terms(analyzer)
