@@ -1,7 +1,7 @@
+from data_extraction import Text
 import re
 import sys
-sys.path.append("/Users/luidu652/Documents/causality_extraction/")
-from data_extraction import Text
+#sys.path.append("/Users/luidu652/Documents/causality_extraction/")
 from search_terms import search_terms, expanded_dict
 # sys.path.append("/Users/luidu652/Documents/causality_extraction/whoosh/src/")
 from whoosh.fields import Schema, TEXT, KEYWORD, ID, STORED, NGRAM
@@ -25,7 +25,7 @@ class BasicTokenizer(analysis.Composable):
     This is an amputated version of huggingface transformers BasicTokenizer
     to have the keyword model operate on units that are compatible with the
     BERT model to be used later on
-    
+
     Constructs a BasicTokenizer that will run basic tokenization (punctuation
     splitting, lower casing, etc.).
 
@@ -109,8 +109,6 @@ class BasicTokenizer(analysis.Composable):
                     split_tokens.extend(self._run_split_on_punc(t,
                                                                 never_split,
                                                                 **kwargs))
-                    # for tok in self._run_split_on_punc(t, never_split, **kwargs):
-                    #    yield tok
             t = Token(positions, chars, removestops=removestops, mode=mode,
                       **kwargs)
             prevend = token.end()
@@ -127,17 +125,11 @@ class BasicTokenizer(analysis.Composable):
                 t.startchar = prevend
                 t.endchar = len(value)
             if hasattr(t, "text") and t.text:
-               split_tokens.extend(self._run_split_on_punc(t,
+                split_tokens.extend(self._run_split_on_punc(t,
                                                            never_split,
                                                            **kwargs))
-               # for tok in self._run_split_on_punc(t, never_split, **kwargs):
-
-            # tokens.append(t)
-        # for token in self.whitespace.finditer(" ".join(
-        # [t.text for t in split_tokens])):
         for t in split_tokens:
             yield t
-        # return split_tokens
 
     def _is_punctuation(self, char):
         """Checks whether `char` is a punctuation character."""
@@ -186,7 +178,6 @@ class BasicTokenizer(analysis.Composable):
         chars = list(t.text)
         i = 0
         start_new_word = True
-        output = []
         current_tok = ""
         tok_start = 0
         punct_tok = Token(t.positions, t.chars,
@@ -206,12 +197,9 @@ class BasicTokenizer(analysis.Composable):
                                 boost=t.boost,
                                 startchar=t.startchar + tok_start,
                                 endchar=t.startchar + i,
-                                pos=t.pos + len(output))
-                    tok_start += 1
-                    output.append(tok_start)
+                                pos=t.pos + tok_start)
+                    tok_start = i + 1
                     current_tok = ""
-                # if output:
-                #     yield output[-1]
                 punct_tok = Token(t.positions, t.chars,
                                   removestops=t.removestops,
                                   mode=t.mode)
@@ -219,27 +207,14 @@ class BasicTokenizer(analysis.Composable):
                 punct_tok.startchar = t.startchar + i
                 punct_tok.text = char
                 punct_tok.endchar = t.startchar + i + 1
-                punct_tok.pos = t.pos + len(output)
-                # output.append(punct_tok)
+                punct_tok.pos = t.pos + tok_start
                 yield punct_tok
-                tok_start += 1
+                tok_start = i + 1
                 start_new_word = True
-                output.append(tok_start)
                 punct_tok = Token(t.positions, t.chars,
                                   removestops=t.removestops,
                                   mode=t.mode)
             else:
-                # if start_new_word:
-                #     output.append(Token(t.positions, t.chars,
-                #     removestops=t.removestops, mode=t.mode))
-                #     output[-1].boost = t.boost
-                #     output[-1].startchar = t.startchar + i
-                #     output[-1].pos = t.pos + len(output)
-                # start_new_word = False
-                # if hasattr(output[-1], "text"):
-                #     output[-1].text += char
-                # else:
-                #     output[-1].text = char
                 if current_tok:
                     current_tok += char
                 else:
@@ -249,7 +224,6 @@ class BasicTokenizer(analysis.Composable):
             punct_tok.endchar = t.startchar + i
             yield punct_tok
             tok_start += 1
-            output.append(tok_start)
         if current_tok:
             yield Token(t.positions, t.chars,
                         removestops=t.removestops,
@@ -258,9 +232,8 @@ class BasicTokenizer(analysis.Composable):
                         boost=t.boost,
                         startchar=t.startchar + tok_start,
                         endchar=t.startchar + i,
-                        pos=t.pos + len(output))
+                        pos=t.pos + tok_start)
             tok_start += 1
-            output.append(tok_start)
 
     def _clean_text(self, text):
         """Performs invalid character removal
@@ -279,10 +252,13 @@ class BasicTokenizer(analysis.Composable):
 class MyHighlighter(Highlighter):
     def __init__(self, fragmenter=None, scorer=None, formatter=None,
                  always_retokenize=False, order=FIRST,
-                 analyzer=StandardAnalyzer(minsize=1, stoplist=[])):
+                 analyzer=None):
         super().__init__(fragmenter, scorer, formatter,
                          always_retokenize, order)
-        self.analyzer = analyzer
+        if analyzer:
+            self.analyzer = analyzer
+        else:
+            self.analyzer = StandardAnalyzer(minsize=1, stoplist=[])
 
     def can_load_chars(self, results, fieldname):
         # Is it possible to build a mapping between the matched terms/docs and
@@ -404,6 +380,7 @@ class MyHighlighter(Highlighter):
         else:
             # Retokenize the text
             analyzer = results.searcher.schema[fieldname].analyzer
+            print("ANALYZER:", analyzer)
             tokens = analyzer(text, positions=True, chars=True, mode="index",
                               removestops=False)
 
@@ -453,6 +430,8 @@ class MyFormatter(Formatter):
 
         text = fragment.text
         index = fragment.sent_boundaries[0]
+        if not index:
+            print(fragment.sent_boundaries)
         match_s_end = fragment.sent_boundaries[-1]
         output = [self._text(text[fragment.startchar:index])]
         output.append("<em>")
@@ -496,6 +475,7 @@ def mksentfrag(text, tokens, startchar=None, endchar=None,
     startchar = max(0, startchar - charsbefore)
     endchar = min(len(text), endchar + charsafter)
     f = ContextFragment(text, tokens, startchar, endchar, match_s_boundaries)
+    print("FRAGMENT:", startchar, endchar, match_s_boundaries)
     return f
 
 
@@ -542,17 +522,31 @@ class MySentenceFragmenter(Fragmenter):
         endchar = None
         # Number of chars in the current sentence
         currentlen = 0
+
         for t in tokens:
             startchar = t.startchar
             endchar = t.endchar
             if charlimit and endchar > charlimit:
                 break
-
             if first is None:
-                if t.text in sentencechars:
-                    # correct previous sentence boundary
-                    if sents:
-                        sents[-1] = (sents[-1][0], startchar)
+                # correct previous sentence boundary
+                if (sents and (t.text[0] in sentencechars or
+                               t.text[-1] in sentencechars or
+                               text[t.endchar] in sentencechars)):
+                    sents[-1] = (sents[-1][0], endchar)
+                    print(sents[-1])
+                    if t.matched:
+                        tks.append(t.copy())
+                        match_sent_id.append(len(sents)-1)
+                    continue
+                elif (re.match("[a-zäöå]", text[t.startchar]) and sents):
+                    first = sents[-1][0]
+                    sents.pop(-1)
+                    if t.matched:
+                        tks.append(t.copy())
+                        match_sent_id.append(len(sents))
+                    continue
+
                 else:
                     # Remember the startchar of the first token in a sentence
                     first = startchar
@@ -562,6 +556,7 @@ class MySentenceFragmenter(Fragmenter):
             currentlen += tlength
 
             if t.matched:
+                print("MATCH", t)
                 tks.append(t.copy())
             # If the character after the current token is end-of-sentence
             # punctuation, finish the sentence and reset
@@ -583,6 +578,8 @@ class MySentenceFragmenter(Fragmenter):
                 if sents and is_right_context and\
                    match_sent_id[-1] + context == len(sents):
                     for i in match_sent_id:
+                        if not last_tks:
+                            break
                         current_endchar = sents[min(i+context,
                                                     len(sents) - 1)][-1]
                         # account for matches at the beginning of the document
@@ -601,8 +598,16 @@ class MySentenceFragmenter(Fragmenter):
                 currentlen = 0
         # If we get to the end of the text and there's still a sentence
         # in the buffer, yield it
+        if first:
+            sents.append((first, endchar))
+        if tks:
+            last_tks.append(tks)
+            match_sent_id.append(len(sents)-1)
         if last_tks:
+            match_sent_id = sorted(set(match_sent_id))
             for i in match_sent_id:
+                if not last_tks:
+                    break
                 if match_sent_id:
                     # account for matches at the very beginning of the document
                     start_s = min(i, len(sents))
@@ -611,7 +616,7 @@ class MySentenceFragmenter(Fragmenter):
                     startchar = sents[max(len(sents) - context, 0)][0]
                 current_endchar = sents[min(i+context, len(sents) - 1)][-1]
                 yield mksentfrag(text, last_tks.pop(0),
-                                 startchar=sents[i-context][0],
+                                 startchar=sents[max(i-context, 0)][0],
                                  endchar=min(current_endchar, endchar),
                                  match_s_boundaries=sents[i])
 
@@ -670,7 +675,7 @@ def escape_xml_refs(text):
 
 def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""]):
     qp = QueryParser("body", schema=ix.schema)
-    sentf = MySentenceFragmenter(maxchars=1000, context_size=1)
+    sentf = MySentenceFragmenter(maxchars=1000)
     # analyzer = StandardAnalyzer(stoplist=[])
     analyzer = BasicTokenizer(do_lower_case=False) | analysis.LowercaseFilter()
     formatter = MyFormatter(between="\n...")
