@@ -724,7 +724,10 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""]):
         print("</xml>", file=output)
 
 
-def print_sample_file(keywords=expanded_dict):
+def print_sample_file(keywords=expanded_dict, same_matches=True):
+    if same_matches:
+        with open("annotations/match_ids.pickle", "rb") as ifile:
+            same_matches = pickle.load(ifile)
     qp = QueryParser("body", schema=ix.schema)
     sentf = MySentenceFragmenter(maxchars=1000, context_size=2)
     analyzer = BasicTokenizer()  # | analysis.LowercaseFilter()
@@ -734,7 +737,7 @@ def print_sample_file(keywords=expanded_dict):
                                 scorer=BasicFragmentScorer(),
                                 formatter=formatter)
     punct = re.compile(r"[!.?]")
-    filename = "hit_sample.xml"
+    filename = "hit_sample_reconstructed.xml"
     with ix.searcher() as s,\
          open(filename, "w") as output:
         total_matches = 0
@@ -749,10 +752,14 @@ def print_sample_file(keywords=expanded_dict):
                                m, "body", top=len(m.results),
                                strict_phrase='"' in _query)]
             total_matches += len(matches)
-            match_ids = list(range(len(matches)))
+            
             # limit to ten matches only
-            if len(matches) > 10:
+            if same_matches:
+                match_ids = same_matches[key]
+            elif len(matches) > 10:
                 match_ids = random.sample(match_ids, 10)
+            else:
+                match_ids = list(range(len(matches)))
             print(f"{key}: {match_ids}")
             for i in match_ids:
                 print(f"<match match_nb='{i}'",
