@@ -2,7 +2,13 @@ documents/*
 *_index
 *_related
 __pycache__
+annotations
+samples
 spacy_models
+transformers
 whoosh
 notes.md
-ix_files.pickle
+*ix_files.pickle
+expanded_dict.pickle
+search_terms.py
+tokeniser_comparison.py
