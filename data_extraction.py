@@ -162,8 +162,13 @@ class Text(object):
             return True
 
     def from_html(self, path):
-        with open(path) as ifile:
-            doc = ifile.read()
+        """extract a document from html given the path to the document
+        or the document as a string"""
+        if type(path) == str:
+            with open(path) as ifile:
+                doc = ifile.read()
+        else:
+            doc = path
         soup = bs4.BeautifulSoup(doc)
         if soup.h1:
             self.title = soup.h1.text
