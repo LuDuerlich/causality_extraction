@@ -1,2 +1,8 @@
 documents/*
-documents.tar
+*_index
+*_related
+__pycache__
+spacy_models
+whoosh
+notes.md
+ix_files.pickle
