@@ -54,9 +54,13 @@ def compare_segmentation(a, b, c=None, debug=False):
     if c:
         c_gen = c.sents
     for a_s in a_gen:
+        # compare sentences on token basis
+        a_s = [tok.text for tok in a_s]
         for b_s in b_gen:
+            b_s = [tok.text for tok in b_s]
             if c and c_gen:
                 for c_s in c_gen:
+                    c_s = [tok.text for tok in c_s]
                     if debug:
                         print(f" 1) {a_s}\n 2) {b_s}\n 3) {c_s}\n")
                     else:
