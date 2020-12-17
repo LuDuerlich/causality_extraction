@@ -4,7 +4,7 @@ documents/*
 __pycache__
 annotations
 samples
-spacy_models
+spacy_model
 transformers
 whoosh
 notes.md
@@ -12,3 +12,4 @@ notes.md
 expanded_dict.pickle
 search_terms.py
 tokeniser_comparison.py
+*.log
