@@ -1,13 +1,13 @@
 from bs4 import BeautifulSoup
 import spacy
-
+import pytest
 
 with open("hit_samplereconstructed.xml") as ifile:
     mark_up = BeautifulSoup(ifile.read())
 hits = [match.text for match in mark_up.find_all('match')]
 
 
-def test_language_models(m1=None, m2=None, m3=None, debug=False, ix=[0]):
+def try_language_models(m1=None, m2=None, m3=None, debug=False, ix=[0]):
     """compares two or more language models on the first
     match in hits. If no model names are given, default
     is to test English, Norwegian and Multilingual
@@ -46,7 +46,9 @@ def test_language_models(m1=None, m2=None, m3=None, debug=False, ix=[0]):
         else:
             last = None
             compare_segmentation(docs[0], docs[1], last, debug)
-
+    if debug:
+        print("Done!")
+    return True
 
 def compare_segmentation(a, b, c=None, debug=False):
     """check if two or three sentencizer segmentations are the same
@@ -89,10 +91,11 @@ def compare_segmentation(a, b, c=None, debug=False):
     return True
 
 
-# we are interested in the Swedish models
-m1 = 'spacy_model/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
-m2 = 'spacy_model/sv_model_upos/sv_model0/sv_model_upos0-0.0.0/'
+def test_lms():
+    # we are interested in the Swedish models
+    m1 = 'spacy_model/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
+    m2 = 'spacy_model/sv_model_upos/sv_model0/sv_model_upos0-0.0.0/'
 
-# and potentially the multilingual one
-m3 = 'xx_ent_wiki_sm'
-test_language_models(m1, m2, ix=range(len(hits)))
+    # and potentially the multilingual one
+    m3 = 'xx_ent_wiki_sm'
+    assert try_language_models(m1, m2, ix=range(len(hits))) == True
