@@ -1,7 +1,10 @@
 from data_extraction import Text
+import bs4
+import copy
+import tarfile
 import re
 import sys
-#sys.path.append("/Users/luidu652/Documents/causality_extraction/")
+# sys.path.append("/Users/luidu652/Documents/causality_extraction/")
 from search_terms import search_terms, expanded_dict
 # sys.path.append("/Users/luidu652/Documents/causality_extraction/whoosh/src/")
 from whoosh.fields import Schema, TEXT, KEYWORD, ID, STORED, NGRAM
@@ -17,8 +20,21 @@ schema = None
 
 
 def strip_tags(string):
+    """strip title tags from string"""
+
     return re.sub("<h1>|</h1>", "", string)
 
+def use_tarfile():
+    """access files in tar archive"""
+
+    t = tarfile.open("documents.tar", "r")
+    files = t.getnames()
+    for f in files:
+        if not f.name == "documents":
+            with t.extractfile(f) as document:
+                pass
+            # document is a file buffer and can now be read
+    t.close()
 
 class BasicTokenizer(analysis.Composable):
     """
@@ -380,7 +396,7 @@ class MyHighlighter(Highlighter):
         else:
             # Retokenize the text
             analyzer = results.searcher.schema[fieldname].analyzer
-            print("ANALYZER:", analyzer)
+            # print("ANALYZER:", analyzer)
             tokens = analyzer(text, positions=True, chars=True, mode="index",
                               removestops=False)
 
@@ -400,6 +416,7 @@ class MyHighlighter(Highlighter):
 
 
 class ContextFragment(Fragment):
+    """Fragment of a matched sentence with n sentences of context"""
 
     def __init__(self, text, matches, startchar=0, endchar=-1,
                  sent_boundaries=(0, -1)):
@@ -408,7 +425,8 @@ class ContextFragment(Fragment):
 
 
 class MyFormatter(Formatter):
-    """Joke's on you, it does not format"""
+    """HTML formatter
+    highlights match sentence and term with HTML style tags."""
 
     def __init__(self, between="..."):
         """
@@ -418,8 +436,8 @@ class MyFormatter(Formatter):
         self.between = between
 
     def format_fragment(self, fragment, replace=False):
-        """Returns a formatted version of the given text, using the "token"
-        objects in the given :class:`Fragment`.
+        """Returns an emphasised formatted version of the given text,
+        using the "token" objects in the given :class:`Fragment`.
 
         :param fragment: a :class:`Fragment` object representing a list of
             matches in the text.
@@ -430,8 +448,8 @@ class MyFormatter(Formatter):
 
         text = fragment.text
         index = fragment.sent_boundaries[0]
-        if not index:
-            print(fragment.sent_boundaries)
+        # if not index:
+        #     print(fragment.sent_boundaries)
         match_s_end = fragment.sent_boundaries[-1]
         output = [self._text(text[fragment.startchar:index])]
         output.append("<em>")
@@ -450,7 +468,7 @@ class MyFormatter(Formatter):
         return "".join(output)
 
     def format(self, fragments, replace=False):
-        """Returns a formatted version of the given text, using a list of
+        """Returns a bold formatted version of the given text, using a list of
         :class:`Fragment` objects.
         """
 
@@ -475,7 +493,7 @@ def mksentfrag(text, tokens, startchar=None, endchar=None,
     startchar = max(0, startchar - charsbefore)
     endchar = min(len(text), endchar + charsafter)
     f = ContextFragment(text, tokens, startchar, endchar, match_s_boundaries)
-    print("FRAGMENT:", startchar, endchar, match_s_boundaries)
+    # print("FRAGMENT:", startchar, endchar, match_s_boundaries)
     return f
 
 
@@ -532,9 +550,9 @@ class MySentenceFragmenter(Fragmenter):
                 # correct previous sentence boundary
                 if (sents and (t.text[0] in sentencechars or
                                t.text[-1] in sentencechars or
-                               text[t.endchar] in sentencechars)):
+                               (t.endchar < len(text) and
+                                text[t.endchar] in sentencechars))):
                     sents[-1] = (sents[-1][0], endchar)
-                    print(sents[-1])
                     if t.matched:
                         tks.append(t.copy())
                         match_sent_id.append(len(sents)-1)
@@ -556,7 +574,7 @@ class MySentenceFragmenter(Fragmenter):
             currentlen += tlength
 
             if t.matched:
-                print("MATCH", t)
+                # print("MATCH", t)
                 tks.append(t.copy())
             # If the character after the current token is end-of-sentence
             # punctuation, finish the sentence and reset
@@ -611,6 +629,12 @@ class MySentenceFragmenter(Fragmenter):
                 if match_sent_id:
                     # account for matches at the very beginning of the document
                     start_s = min(i, len(sents))
+                    if not sents:
+                        print(start_s, context, sents, last_tks, match_sent_id)
+                        break
+
+                    if start_s - context > len(sents):
+                        print(start_s, context, sents)
                     current_startchar = sents[max(start_s - context, 0)][0]
                 else:
                     startchar = sents[max(len(sents) - context, 0)][0]
@@ -621,8 +645,143 @@ class MySentenceFragmenter(Fragmenter):
                                  match_s_boundaries=sents[i])
 
 
+class MyOldSentenceFragmenter(Fragmenter):
+    """Breaks the text up on sentence end punctuation characters
+    (".", "!", or "?"). This object works by looking in the original text for a
+    sentence end as the next character after each token's 'endchar'.
+
+    When highlighting with this fragmenter, you should use an analyzer that
+    does NOT remove stop words, for example::
+
+        sa = StandardAnalyzer(stoplist=None)
+    """
+
+    def __init__(self, maxchars=1000, sentencechars=".!?",
+                 charlimit=None, context_size=2):
+        """
+        :param maxchars: The maximum number of characters allowed in a
+            fragment.
+        :param context_size: How many sentences left and right of the
+            match to display.
+        """
+
+        self.maxchars = maxchars
+        self.sentencechars = frozenset(sentencechars)
+        self.charlimit = charlimit
+        self.context_size = context_size
+
+    def fragment_tokens(self, text, tokens):
+        maxchars = self.maxchars
+        sentencechars = self.sentencechars
+        charlimit = self.charlimit
+        context = self.context_size
+
+        textlen = len(text)
+        # startchar of first token in the current sentence
+        first = None
+        # Buffer for matched tokens in the current sentence
+        tks = []
+        sents = []
+        is_right_context = False
+        match_sent_id = []
+        last_tks = []
+        endchar = None
+        # Number of chars in the current sentence
+        currentlen = 0
+
+        for t in tokens:
+            startchar = t.startchar
+            endchar = t.endchar
+            if charlimit and endchar > charlimit:
+                break
+
+            if first is None:
+                # Remember the startchar of the first token in a sentence
+                first = startchar
+                currentlen = 0
+
+            tlength = endchar - startchar
+            currentlen += tlength
+
+            if t.matched:
+                tks.append(t.copy())
+
+            # If the character after the current token is end-of-sentence
+            # punctuation, finish the sentence and reset
+            if endchar < textlen and text[endchar] in sentencechars:
+                # Don't break for two periods in a row (e.g. ignore "...")
+                if endchar + 1 < textlen and\
+                   text[endchar + 1] in sentencechars:
+                    continue
+                # If the sentence had matches and it's not too long,
+                # save it and process the next sentences until the edge
+                # of the context window is reached
+                if tks and currentlen <= maxchars:
+                    if not sents:
+                        # insert dummy sent before actual sent
+                        sents.append((first, endchar))
+                    match_sent_id.append(len(sents))
+                    is_right_context = True
+                    last_tks.append(tks)
+                if sents and is_right_context and\
+                   match_sent_id[-1] + context == len(sents):
+                    for i in match_sent_id:
+                        current_endchar = sents[min(i+context,
+                                                    len(sents) - 1)][-1]
+                        # account for matches at the beginning of the document
+                        current_startchar = sents[max(i-context, 0)][0]
+                        yield mksentfrag(text, last_tks.pop(0),
+                                         startchar=current_startchar,
+                                         endchar=min(current_endchar, endchar),
+                                         match_s_boundaries=sents[i])
+                    # reset the variables for each match
+                    match_sent_id = []
+                    is_right_context = False
+                # Reset the counts within a sentence
+                sents.append((first, endchar))
+                tks = []
+                first = None
+                currentlen = 0
+        # If we get to the end of the text and there's still a sentence
+        # in the buffer, yield it
+        if last_tks:
+            for i in match_sent_id:
+                # if match_sent_id:
+                #     # account for matches at the beginning of the document
+                #     start_s = min(i, len(sents))
+                #     current_startchar = sents[max(start_s - context, 0)][0]
+                # else:
+                #     startchar = sents[max(len(sents) - context, 0)][0]
+                current_endchar = sents[min(i+context, len(sents) - 1)][-1]
+                # print(startchar, current_endchar, sents[i], len(sents), len(text))
+                yield mksentfrag(text, last_tks.pop(0),
+                                 startchar=sents[max(i-context, 0)][0],
+                                 endchar=min(current_endchar, endchar),
+                                 match_s_boundaries=sents[i])
+
+
 def create_index(path="test_index/", ixname="test", random_files=False,
-                 schema=schema):
+                 schema=schema, add=False):
+    """Create or add to a specified index.
+
+    Parameters:
+               path (str):
+                          path to index directory (should already exist)
+                          (default='test_index'
+               ixname (str):
+                          name of the index to create / access
+               random_files (bool):
+                          whether or not to sample random files from
+                          documents
+               schema (Schema):
+                          index schema specifying the fields within the
+                          documents and how to index and access them
+               add (bool):
+                          whether or not to add the same previously
+                          sampled files to the index
+                          (useful to compare different index settings)
+"""
+
     if not path.endswith("/"):
         path += "/"
     if os.path.exists(path) and os.listdir(path):
@@ -640,30 +799,36 @@ def create_index(path="test_index/", ixname="test", random_files=False,
     if random_files:
         with open("ix_files.pickle", "rb") as ifile:
             seen = pickle.load(ifile)
-        files = random.sample([el for el in glob.glob("documents/s_*")
-                               if el not in seen], 500)
+        if not add:
+            files = seen
+        else:
+            # todo: adapt to tarfile
+            files = random.sample([el for el in glob.glob("documents/s_*")
+                                   if el not in seen], 500)
+        # I don't remember why this is here
         seen.extend(files)
-        with open("ix_files.pickle", "wb") as ofile:
+        with open("bt_ix_files.pickle", "wb") as ofile:
             pickle.dump(seen, ofile)
     else:
         files = ["H2B34", "H2B340", "H2B341", "H2B341", "H2B342",
                  "H2B343", "H2B344", "H2B345", "H2B346", "H2B347",
                  "H2B348", "H2B349", "H2B35"]
-    for k in files:
-        text = Text("")
-        if k.endswith("html"):
-            text.from_html(k)
-            k = k.split("_")[1].split(".")[0]
-        else:
-            text.from_html(f"documents/s_{k}.html")
-        for section in text:
-            writer.add_document(doc_title=re.sub(r'\s+',
-                                                 ' ',
-                                                 text.title) + f" {k}",
-                                sec_title=re.sub(r'\s+',
-                                                 ' ', section.title),
-                                body=re.sub(r'\s+', ' ',
-                                            "\n".join(section.text)))
+    with tarfile.open("documents.tar", "r") as ifile:
+        for k in files:
+            text = Text("")
+            if k.endswith("html"):
+                text.from_html(ifile.extractfile(k).read())
+                k = k.split("_")[1].split(".")[0]
+            else:
+                text.from_html(f"documents/s_{k}.html")
+            for section in text:
+                writer.add_document(doc_title=re.sub(r'\s+',
+                                                     ' ',
+                                                     text.title) + f" {k}",
+                                    sec_title=re.sub(r'\s+',
+                                                     ' ', section.title),
+                                    body=re.sub(r'\s+', ' ',
+                                                "\n".join(section.text)))
     writer.commit()
 
 
@@ -674,6 +839,18 @@ def escape_xml_refs(text):
 
 
 def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""]):
+    """Print all examples matching the  query term to an XML file.
+
+    Parameters:
+       keywords (list):
+                        keywords to search for; here intended to indicate
+                        causality (default=['orsak', '"bidrar till"'])
+                        (note formatting for strict phrases with extra '"'
+       terms (list):
+                        additional terms to search for; e.g. 'klimatförendring'
+                        (required: no)
+    """
+
     qp = QueryParser("body", schema=ix.schema)
     sentf = MySentenceFragmenter(maxchars=1000)
     # analyzer = StandardAnalyzer(stoplist=[])
@@ -708,6 +885,7 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""]):
                       f"doc='{strip_tags(title)}'",
                       f"section='{sec_title}'>",
                       file=output)
+                assert len(matched_s.results) == len(r)
                 hits = highlighter.highlight_hit(
                     matched_s, "body",
                     # top = 10,
@@ -724,60 +902,141 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""]):
         print("</xml>", file=output)
 
 
-def print_sample_file(keywords=expanded_dict, same_matches=True):
+def print_sample_file(keywords=expanded_dict, same_matches=None):
+    """Sample 10 matches per query term and print them to an XML file.
+
+    Parameters:
+       keywords (dict):
+                        dictionary of inflected terms organised by their
+                        uninflected form (default=expanded_dict)
+       same_matches (dict):
+                        dictionary of uninflected terms, their correspond-
+                        ing matches and metadata. Use only if same queries
+                        should be sampled (default=None)
+    """
+
+    filename = "hit_sample.xml"
     if same_matches:
         with open("annotations/match_ids.pickle", "rb") as ifile:
-            same_matches = pickle.load(ifile)
+            match_order = pickle.load(ifile)
+        filename = filename.split(".")[0] + "_reconstructed.xml"
     qp = QueryParser("body", schema=ix.schema)
-    sentf = MySentenceFragmenter(maxchars=1000, context_size=2)
-    analyzer = BasicTokenizer()  # | analysis.LowercaseFilter()
+    sentf = MyOldSentenceFragmenter(maxchars=1000, context_size=4)
+    # analyzer = BasicTokenizer()  # | analysis.LowercaseFilter()
+    # analyzer = StandardAnalyzer(stoplist=[])
+    # print(analyzer)
     formatter = MyFormatter(between="\n...")
-    highlighter = MyHighlighter(fragmenter=sentf,
-                                analyzer=analyzer,
-                                scorer=BasicFragmentScorer(),
-                                formatter=formatter)
+    highlighter = Highlighter(fragmenter=sentf,
+                              scorer=BasicFragmentScorer(),
+                              formatter=formatter)
+    # highlighter = MyHighlighter(fragmenter=sentf,
+    #                             analyzer=analyzer,
+    #                             scorer=BasicFragmentScorer(),
+    #                             formatter=formatter)
     punct = re.compile(r"[!.?]")
-    filename = "hit_sample_reconstructed.xml"
     with ix.searcher() as s,\
          open(filename, "w") as output:
         total_matches = 0
         print("<xml>", file=output)
-        for key in expanded_dict:
+        for key in list(expanded_dict):
             _query = '~2 OR '.join(expanded_dict[key])
             print(f"<query term='{key}({_query})'>", file=output)
             parsed_query = qp.parse(_query)
             r = s.search(parsed_query, terms=True, limit=None)
+            matches = []
+            nb_r = len(r)
             matches = [(hit, m) for m in r
                        for hit in highlighter.highlight_hit(
                                m, "body", top=len(m.results),
                                strict_phrase='"' in _query)]
             total_matches += len(matches)
-            
+
             # limit to ten matches only
+            print("nb of matches before sampling:", len(matches))
             if same_matches:
-                match_ids = same_matches[key]
+                match_ids = find_matched(matches,
+                                         same_matches[key],
+                                         match_order[key])
             elif len(matches) > 10:
                 match_ids = random.sample(match_ids, 10)
             else:
                 match_ids = list(range(len(matches)))
-            print(f"{key}: {match_ids}")
-            for i in match_ids:
-                print(f"<match match_nb='{i}'",
-                      f"doc='{strip_tags(matches[i][1]['doc_title'])}'",
-                      f"section='{matches[i][1]['sec_title']}'>",
-                      file=output)
-                print(re.sub("&", "&amp;", matches[i][0]), file=output)
-                print("</match>", file=output)
+            print(f"Query {key}: {len(matches)} matches")
+            for i, nb in match_ids:
+                i = int(i)
+                if i < len(matches):
+                    print(f"<match match_nb='{nb}({i})'",
+                          f"doc='{strip_tags(matches[i][1]['doc_title'])}'",
+                          f"section='{matches[i][1]['sec_title']}'>",
+                          file=output)
+                    print(re.sub("&", "&amp;", matches[i][0]), file=output)
+                    print("</match>", file=output)
 
             print("</query>", file=output)
         print("</xml>", file=output)
     print(f"{total_matches} total matches")
 
 
+def find_matched(matches, match_dict, order):
+    """match hits to previously sampled matches by document and section ids
+    and target sentence and order by original match number.
+
+    This is necessary because the previously retrieved match numbers do not
+    align in all cases. (May unfortunately also retrieve duplicate senteces
+    within the same section)"""
+
+    match_ids = []
+    same_matched = copy.deepcopy(match_dict)
+    for i, m in enumerate(matches):
+        for match in same_matched:
+            if m[1]["doc_title"] == match['doc'] and\
+               m[1]['sec_title'] == match['st'] and\
+               match['t'] in m[0]:
+                match_ids.append([i, match['nb']])
+                same_matched.remove(match)
+        if len(match_ids) == 10:
+            ordered = []
+            print(len(match_ids), match_ids, order)
+            for o in order:
+                for mi in match_ids:
+                    if str(o) == mi[1]:
+                        ordered.append(mi)
+            return ordered
+    print(len(match_ids))
+    ordered = []
+    for o in order:
+        for mi in match_ids:
+            if str(o) == mi[1]:
+                ordered.append(mi)
+
+    return ordered
+
+
+def extract_sample():
+    """extract matches and metadata from previously sampled queries"""
+
+    with open("hit_sample.xml") as ifile:
+        soup = bs4.BeautifulSoup(ifile.read())
+    queries = {}
+    for query in soup.find_all("query"):
+        matches = []
+        for match in query.find_all("match"):
+            matches.append({"nb": match['match_nb'],
+                            "doc": match['doc'],
+                            "st": match['section'],
+                            "t": "".join([str(el) for el in
+                                          match.em.contents])})
+        queries[query['term'].split("(")[0]] = matches
+    return queries
+
+
 if __name__ == "__main__":
-    analyzer = BasicTokenizer(do_lower_case=False) | analysis.LowercaseFilter()
+    # analyzer = BasicTokenizer(do_lower_case=False) |\
+    #    analysis.LowercaseFilter()
+    analyzer = StandardAnalyzer(stoplist=[])
     schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer),
                     sec_title=TEXT(stored=True, analyzer=analyzer),
                     body=TEXT(stored=True, phrase=True, analyzer=analyzer))
-    ix = index.open_dir("test_index", indexname="test")
-    # ix = index.open_dir("bigger_index", indexname="big_index")
+    # ix = index.open_dir("test_index", indexname="test")
+    ix = index.open_dir("bigger_index", indexname="big_index")
+    # ix = index.open_dir("big_bt_index", indexname="bt_index")
