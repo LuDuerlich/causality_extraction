@@ -1,10 +1,20 @@
 from bs4 import BeautifulSoup
 import spacy
 import pytest
+import copy
+import re
 
-with open("hit_samplereconstructed.xml") as ifile:
+with open("samples/hit_samplereconstructed.xml") as ifile:
     mark_up = BeautifulSoup(ifile.read())
-hits = [match.text for match in mark_up.find_all('match')]
+# markup
+matches = mark_up.find_all('match')
+
+# string representations
+hits = [match.text for match in matches]
+model_path = 'spacy_model/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
+model = spacy.load(model_path)
+sentencizer = model.create_pipe('sentencizer')
+model.add_pipe(sentencizer)
 
 
 def try_language_models(m1=None, m2=None, m3=None, debug=False, ix=[0]):
@@ -50,6 +60,7 @@ def try_language_models(m1=None, m2=None, m3=None, debug=False, ix=[0]):
         print("Done!")
     return True
 
+
 def compare_segmentation(a, b, c=None, debug=False):
     """check if two or three sentencizer segmentations are the same
     shows the corresponding sentences one by one if debug is True.
@@ -62,6 +73,7 @@ def compare_segmentation(a, b, c=None, debug=False):
                       mode that displays sentences side by side
                       for each Doc.
     """
+
     a_gen = a.sents
     b_gen = b.sents
     if c:
@@ -92,10 +104,122 @@ def compare_segmentation(a, b, c=None, debug=False):
 
 
 def test_lms():
+    """compare the two Swedish language models"""
+
     # we are interested in the Swedish models
     m1 = 'spacy_model/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
     m2 = 'spacy_model/sv_model_upos/sv_model0/sv_model_upos0-0.0.0/'
 
     # and potentially the multilingual one
     m3 = 'xx_ent_wiki_sm'
-    assert try_language_models(m1, m2, ix=range(len(hits))) == True
+    assert try_language_models(m1, m2, ix=range(len(hits)))
+
+
+def segment_match(match, new_match, highlight_query=False, context=2):
+    """Split a whoosh match into sentences
+    Parameters:
+               match (bs4.element.Tag):
+                     query match in context
+               new_match (bs4.element.Tag):
+                     empty match tag
+               highlight_query (bool):
+                     whether or not the query term(s) should be
+                     highlighted within the matched sentence
+               context (int):
+                     how many sentences of context to display around
+                     the matched sentence
+
+    for now uses the Swedish xpos model
+    """
+
+    full_text = match.text
+    query_matches = None
+    # potentially useful later if the match sequence gets segmented
+    # into multiple sentences
+    if match.b:
+        query_matches = match("b")
+    q_ex = re.compile(r" *(\b\w+\b *)?".join([m.text for m in query_matches]))
+
+    match_sequence = match.em.text
+    sents = []
+    match_id = None
+    match_by_term = None
+    match_first_term = None
+    for i, sent in enumerate(model(full_text).sents):
+        sents.append(sent)
+        if match_sequence in sent.text:
+            match_id = i
+        elif q_ex.search(sent.text):
+            match_by_term = i
+        elif query_matches[0].text in sent.text:
+            match_first_term = i
+
+    if match_id is None and match_by_term is not None:
+        match_id = match_by_term
+    if match_id is None and match_first_term is not None:
+        match_id = match_first_term
+    if match_id is not None:
+        start = max(match_id - context, 0)
+        end = min(match_id + context + 1, len(sents))
+        soup = BeautifulSoup()
+        for s in sents[start:match_id]:
+            new_match.append(s.text)
+        # add a new tag for the highlighted sentence
+        tag = soup.new_tag("em")
+        tag.string = ""
+        # highlight the query match if needed
+        if highlight_query and query_matches:
+            q_tags = {}
+            tag_order = []
+            for q in query_matches:
+                q_tag = soup.new_tag("b")
+                text = q.text
+                q_tag.append(text)
+                if text in q_tags:
+                    q_tags[text].append(q_tag)
+                else:
+                    q_tags[text] = [q_tag]
+                tag_order.append(text)
+            for token in sents[match_id]:
+                text = token.text
+                if tag_order and text == tag_order[0]:
+                    tag.append(q_tags[text].pop(0))
+                    tag_order.pop(0)
+                    if not q_tags[text]:
+                        del q_tags[text]
+                else:
+                    tag.append(text)
+        else:
+            tag.string = sents[match_id].text
+        new_match.append(tag)
+        if end <= len(sents):
+            for s in sents[match_id+1:end]:
+                new_match.append(s.text)
+        return new_match
+
+
+def format_output(matches, dest=None):
+    """reformat query matches and write them to dest
+    Parameter:
+              matches (bs4.element.ResultSet):
+                      result set of all matches in a document
+              dest (BufferedWriter):
+                      an opened file to write to (optional)
+    """
+
+    new_matches = BeautifulSoup()
+    for match in matches:
+        new_match = new_matches.new_tag("match")
+        new_match.attrs = match.attrs
+        segment_match(match, new_match, True)
+        if new_match.text:
+            new_matches.append(new_match)
+
+    print(new_matches.prettify(), file=dest)
+
+
+def restructure_hit_sample():
+    with open("new_format.xml", "w") as ofile:
+        print("<xml>", file=ofile)
+        format_output(matches, ofile)
+        print("</xml>", file=ofile)
