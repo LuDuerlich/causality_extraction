@@ -3,6 +3,7 @@ documents/*
 *_related
 __pycache__
 annotations
+fixed_hyphenation
 samples
 spacy_model
 transformers
