@@ -12,4 +12,6 @@ notes.md
 expanded_dict.pickle
 search_terms.py
 tokeniser_comparison.py
+file_stats.py
 *.log
+*~
