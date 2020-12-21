@@ -7,44 +7,29 @@ search_terms = ['"bero på"',
                 '"leda till"',
                 '"på grund av"',
                 '"till följd av"',
-                "följd",
                 '"är ett resultat av"',
-                "resultat",
                 "resultera",
-                "därför",
-                "eftersom",
-                "förklara",
                 "förorsaka",
-                "orsak",
                 "orsaka",
                 "påverka",
                 "effekt",
                 "medföra",
                 "framkalla",
-                "vålla",
-                "rendera"]
+                "vålla"]
 
 annotated_search_terms = [('"bero på"', 0, "vb"),
                 ('"bidra till"', 0, "vb"),
                 ('"leda till"', 0, "vb"),
                 ('"på grund av"', 1, "nn"),
                 ('"till följd av"', 1, "nn"),
-                ("följd", 0, "nn"),
                 ('"vara ett resultat av"', 0, "vb"),
-                ("resultat", 0, "nn"),
                 ("resultera", 0, "vb"),
-                ("därför", None, None),
-                ("eftersom", None, None),
-                ("förklara", 0, "vb"),
                 ("förorsaka", 0, "vb"),
-                ("orsak", 0, "nn"),
                 ("orsaka", 0, "vb"),
                 ("påverka", 0, "vb"),
-                ("effekt", 0, "nn"),
                 ("medföra",0, "vb"),
                 ("framkalla", 0, "vb"),
-                ("vålla", 0, "vb"),
-                ("rendera", 0, "vb")]
+                ("vålla", 0, "vb")]
 
 
 def expand():
@@ -80,11 +65,33 @@ def expand():
             terms[term].add(term)
     return terms
 
-if os.path.isfile("expanded_dict.pickle"):
-    with open("expanded_dict.pickle", "rb") as ifile:
-        expanded_dict = pickle.load(ifile)
-else:
-    expanded_dict = expand()
-
-
-expanded_list = ['"berodde på"', '"berotts på"', '"beros på"', '"beroddes på"', '"berott på"', '"berodd på"', '"beror på"', '"berodda på"', '"berodds på"', '"bero på"', '"bidras till"', '"bidragits till"', '"bidragna till"', '"bidragit till"', '"bidrogs till"', '"bidragens till"', '"bidraget till"', '"bidragne till"', '"bidragande till"', '"bidrar till"', '"bidragen till"', '"bidrog till"', '"bidra till"', '"frågans om hur"', '"fråge om hur"', '"frågors om hur"', '"frågornas om hur"', '"frågor om hur"', '"frågan om hur"', '"fråga om hur"', '"frågorna om hur"', '"gavs ökad effektivitet"', '"ge ökad effektivitet"', '"given ökad effektivitet"', '"givne ökad effektivitet"', '"givet ökad effektivitet"', '"gav ökad effektivitet"', '"givens ökad effektivitet"', '"givande ökad effektivitet"', '"givna ökad effektivitet"', '"getts ökad effektivitet"', '"ges ökad effektivitet"', '"ger ökad effektivitet"', '"gett ökad effektivitet"', '"ges positiva effekter i form av"', '"ge positiva effekter i form av"', '"givna positiva effekter i form av"', '"ger positiva effekter i form av"', '"givens positiva effekter i form av"', '"givet positiva effekter i form av"', '"ge positiva effekter i form av"', '"given positiva effekter i form av"', '"ges positiva effekter i form av"', '"gavs positiva effekter i form av"', '"gett positiva effekter i form av"', '"givne positiva effekter i form av"', '"gav positiva effekter i form av"', '"getts positiva effekter i form av"', '"givande positiva effekter i form av"', '"ledads till"', '"letts till"', '"ledats till"', '"ledades till"', '"ledad till"', '"ledda till"', '"leda till"', '"ledande till"', '"ledds till"', '"ledd till"', '"leder till"', '"lett till"', '"ledat till"', '"led till"', '"ledade till"', '"ledes till"', '"ledas till"', '"ledar till"', '"ledde till"', '"leddes till"', '"på grund av"', '"som en lösning på"', '"syftet med"', '"till följd av"', 'bidras', 'bidra', 'bidragna', 'bidrar', 'bidragens', 'bidraget', 'bidra', 'bidragen', 'bidras', 'bidrogs', 'bidragit', 'bidragne', 'bidrog', 'bidragits', 'bidragande', 'därför', 'eftersom', 'förklarades', 'förklarads', 'förklarar', 'förklarat', 'förklarad', 'förklarats', 'förklara', 'förklarade', 'förklarande', 'förklaras', 'förorsakads', 'förorsakar', 'förorsakande', 'förorsakas', 'förorsakats', 'förorsaka', 'förorsakat', 'förorsakad', 'förorsakades', 'förorsakade', 'orsak', 'orsakens', 'orsakers', 'orsakernas', 'orsaker', 'orsaken', 'orsakerna', 'orsakas', 'orsakats', 'orsakar', 'orsakande', 'orsakad', 'orsaka', 'orsakades', 'orsakat', 'orsakads', 'orsakade', 'påverkat', 'påverkades', 'påverkads', 'påverkade', 'påverkats', 'påverkar', 'påverka', 'påverkas', 'påverkad', 'påverkande', 'resultatindikatorer', 'resultatindikatorens', 'resultatindikatorerna', 'resultatindikator', 'resultatindikators', 'resultatindikatorers', 'resultatindikatoren', 'resultatindikatorernas']
+expanded_dict = {'"bero på"': {'"berodd på"', '"beror på"', '"berodds på"', '"beros på"', '"berodda på"',
+                               '"berott på"', '"berotts på"', '"beroddes på"', '"berodde på"', '"bero på"'},
+                 '"bidra till"': {'"bidragna till"', '"bidragits till"', '"bidrog till"', '"bidra till"',
+                                  '"bidragande till"', '"bidragit till"', '"bidrogs till"', '"bidras till"',
+                                  '"bidrar till"', '"bidragne till"'},
+                 '"leda till"': {'"ledda till"', '"led till"', '"ledar till"', '"leder till"', '"lett till"',
+                                 '"ledades till"', '"ledds till"', '"ledes till"', '"leda till"', '"ledde till"',
+                                 '"ledad till"', '"ledats till"', '"ledd till"', '"ledas till"', '"ledat till"',
+                                 '"ledads till"', '"ledande till"', '"letts till"', '"ledade till"', '"leddes till"'},
+                 '"på grund av"': {'"på grunders av"', '"på grundet av"', '"på grunder av"', '"på grunds av"',
+                                   '"på grundets av"', '"på grunden av"', '"på grund av"', '"på grundens av"',
+                                   '"på grunderna av"', '"på grundernas av"'},
+                 '"till följd av"': {'"till följds av"', '"till följden av"', '"till följd av"', '"till följdens av"',
+                                     '"till följder av"', '"till följdernas av"', '"till följderna av"', '"till följders av"'},
+                 '"vara ett resultat av"': {'"vara ett resultat av"', '"är ett resultat av"', '"var ett resultat av"',
+                                            '"vore ett resultat av"', '"varit ett resultat av"'},
+                 'resultera': {'resulterats', 'resulterat', 'resulterar', 'resulterads', 'resulterade', 'resulterande',
+                               'resulterad', 'resulteras', 'resultera', 'resulterades'},
+                 'förorsaka': {'förorsakads', 'förorsakas', 'förorsakar', 'förorsakande', 'förorsakades', 'förorsakade',
+                               'förorsakats', 'förorsakat', 'förorsakad', 'förorsaka'},
+                 'orsaka': {'orsakades', 'orsakad', 'orsaka', 'orsakads', 'orsakande', 'orsakade', 'orsakat', 'orsakats',
+                            'orsakar', 'orsakas'},
+                 'påverka': {'påverkats', 'påverkads', 'påverkas', 'påverkade', 'påverkar', 'påverkad', 'påverkades',
+                             'påverkande', 'påverka', 'påverkat'},
+                 'medföra': {'medförts', 'medförd', 'medföra', 'medföras', 'medförda', 'medföres', 'medförds', 'medförde',
+                             'medför', 'medfördes', 'medfört'},
+                 'framkalla': {'framkallas', 'framkallade', 'framkallads', 'framkallades', 'framkallats', 'framkallat',
+                               'framkallad', 'framkalla', 'framkallar', 'framkallande'},
+                 'vålla': {'vållats', 'vållad', 'vållat', 'vållades', 'vållas', 'vållande', 'vållar', 'vållade',
+                           'vålla', 'vållads'}}
