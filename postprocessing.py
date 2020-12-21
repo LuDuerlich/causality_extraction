@@ -1,4 +1,5 @@
 from bs4 import BeautifulSoup
+from spacy.tokens.span import Span
 import spacy
 import pytest
 import copy
@@ -115,7 +116,8 @@ def test_lms():
     assert try_language_models(m1, m2, ix=range(len(hits)))
 
 
-def segment_match(match, new_match, highlight_query=False, context=2):
+def segment_match(match, new_match, highlight_query=False, context=2,
+                  redo_boundaries=True):
     """Split a whoosh match into sentences
     Parameters:
                match (bs4.element.Tag):
@@ -128,6 +130,10 @@ def segment_match(match, new_match, highlight_query=False, context=2):
                context (int):
                      how many sentences of context to display around
                      the matched sentence
+               redo_boundaries (bool):
+                     whether or not the original sentence boundaries
+                     should be corrected to account for frequent
+                     abbreviation errors
 
     for now uses the Swedish xpos model
     """
@@ -145,15 +151,18 @@ def segment_match(match, new_match, highlight_query=False, context=2):
     match_id = None
     match_by_term = None
     match_first_term = None
-    for i, sent in enumerate(model(full_text).sents):
-        sents.append(sent)
-        if match_sequence in sent.text:
-            match_id = i
-        elif q_ex.search(sent.text):
-            match_by_term = i
-        elif query_matches[0].text in sent.text:
-            match_first_term = i
-
+    sequence = list(model(full_text).sents)
+    if redo_boundaries:
+        sequence = redefine_boundaries(model(full_text))
+    for i, sent in enumerate(sequence):
+        if sent:
+            sents.append(sent)
+            if match_sequence in str(sent):
+                match_id = i
+            elif q_ex.search(str(sent)):
+                match_by_term = i
+            elif query_matches[0].text in str(sent):
+                match_first_term = i
     if match_id is None and match_by_term is not None:
         match_id = match_by_term
     if match_id is None and match_first_term is not None:
@@ -162,8 +171,9 @@ def segment_match(match, new_match, highlight_query=False, context=2):
         start = max(match_id - context, 0)
         end = min(match_id + context + 1, len(sents))
         soup = BeautifulSoup()
-        for s in sents[start:match_id]:
-            new_match.append(s.text)
+        new_match.append(" ".join([str(s) for s in sents[start:match_id]]))
+        # correct for inconsistent tokenisation
+        new_match.string = re.sub(r" ([.,;:!?])", r"\1", new_match.string)
         # add a new tag for the highlighted sentence
         tag = soup.new_tag("em")
         tag.string = ""
@@ -180,22 +190,83 @@ def segment_match(match, new_match, highlight_query=False, context=2):
                 else:
                     q_tags[text] = [q_tag]
                 tag_order.append(text)
-            for token in sents[match_id]:
-                text = token.text
+            for token in sents[match_id].split():
+                text = str(token)
                 if tag_order and text == tag_order[0]:
+                    tag.append(" ")
                     tag.append(q_tags[text].pop(0))
                     tag_order.pop(0)
                     if not q_tags[text]:
                         del q_tags[text]
                 else:
-                    tag.append(text)
+                    if text in ".,;:!?":
+                        tag.append(text)
+                    else:
+                        tag.append(" " + text)
         else:
-            tag.string = sents[match_id].text
+            tag.string = str(sents[match_id])
         new_match.append(tag)
         if end <= len(sents):
-            for s in sents[match_id+1:end]:
-                new_match.append(s.text)
+            new_match.append(" " +
+                             re.sub(r" ([.,;:!?])", r"\1",
+                                " ".join([str(s) for s in sents[match_id+1:end]])))
         return new_match
+
+
+def redefine_boundaries(sents):
+    """correct sentence boundaries of spacy sentencizer
+    based on rules for abbreviation and possessive markers
+    Parameters:
+               sents (spacy.tokens.span.Span):
+                           a spacy sents generator of Span objects
+    """
+
+    ents = [str(ent) for ent in sents.ents]
+    sents = list(sents.sents)
+    abr_exp = re.compile(r"(m\.m|osv|etc)\.")
+    poss_exp = re.compile(r"\w+:$")
+    for i in range(len(sents)):
+        if i >= len(sents):
+            break
+        has_abbrev = abr_exp.findall(str(sents[i]))[::-1]
+        has_poss = poss_exp.findall(str(sents[i]))
+        split_on_poss = (has_poss and
+                         (i + 1 < len(sents) and str(sents[i+1])[:2] == "s "))
+        if has_abbrev:
+            pad = 0
+            if type(sents[i]) == Span:
+                tokens = list(sents[i].__iter__())
+            else:
+                tokens = sents[i].split()
+            last = None
+            while has_abbrev:
+                nb_abbr = len(has_abbrev)
+                if str(tokens[-1]) == "(":
+                    pad = 1
+                for j, t in enumerate(tokens):
+                    if not has_abbrev:
+                        break
+                    if has_abbrev[-1] in str(t):
+                        if j+1 < len(tokens) and\
+                           (str(tokens[j+1]).istitle() and
+                            str(tokens[j+1]) not in ents):
+                            has_abbrev.pop(-1)
+                            new_s = " ".join(
+                                [tok.text for tok in tokens[j+1:]])
+                            following = sents[i+1:]
+                            sents[i] = " ".join(
+                                [tok.text for tok in tokens[:j+1]])
+                            sents[i+1] = new_s
+                            sents = sents[:i+2]
+                            sents.extend(following)
+                if nb_abbr == len(has_abbrev):
+                    has_abbrev.pop(-1)
+        if split_on_poss:
+            sents[i] = str(sents[i]) + str(sents[i+1])
+            del sents[i+1]
+        else:
+            sents[i] = str(sents[i])
+    return sents
 
 
 def format_output(matches, dest=None):
@@ -208,14 +279,16 @@ def format_output(matches, dest=None):
     """
 
     new_matches = BeautifulSoup()
+    i = 0
     for match in matches:
+        i += 1
         new_match = new_matches.new_tag("match")
         new_match.attrs = match.attrs
         segment_match(match, new_match, True)
         if new_match.text:
             new_matches.append(new_match)
 
-    print(new_matches.prettify(), file=dest)
+    print(new_matches, file=dest)
 
 
 def restructure_hit_sample():
@@ -223,3 +296,23 @@ def restructure_hit_sample():
         print("<xml>", file=ofile)
         format_output(matches, ofile)
         print("</xml>", file=ofile)
+
+
+def compare_boundaries():
+    for i, m in enumerate(matches):
+        doc = model(m.text)
+        s = list(doc.sents)
+        sents = redefine_boundaries(doc)
+        print(f"{i}:", len(s), len(sents))
+        for j in range(max(len(s), len(sents))):
+            if j < len(s):
+                print("1:", s[j])
+            else:
+                print("1:")
+            if j < len(sents):
+                print("2:", sents[j])
+            else:
+                print("2:")
+            print()
+        if input("continue? (Y/n)/n> ").casefold() == "n":
+            break
