@@ -116,8 +116,8 @@ def test_lms():
     assert try_language_models(m1, m2, ix=range(len(hits)))
 
 
-def segment_match(match, new_match, highlight_query=False, context=2,
-                  redo_boundaries=True):
+def segment_match(match, new_match=None, highlight_query=False, context=2,
+                  redo_boundaries=True, xml=True):
     """Split a whoosh match into sentences
     Parameters:
                match (bs4.element.Tag):
@@ -163,14 +163,41 @@ def segment_match(match, new_match, highlight_query=False, context=2,
                 match_by_term = i
             elif query_matches[0].text in str(sent):
                 match_first_term = i
+    # fall-back if the match sequence is now segmented differently
     if match_id is None and match_by_term is not None:
         match_id = match_by_term
     if match_id is None and match_first_term is not None:
         match_id = match_first_term
+    if xml:
+        return format_xml_match(sents, new_match, match_id,
+                                context, highlight_query)
+    else:
+        return format_match(sents, match_id,
+                            context, highlight_query)
+
+
+def format_xml_match(sents, new_match, match_id, context, highlight_query):
+    """format match in xml style. Returns a filled bs4.element.Tag
+    Parameters:
+               sents (list):
+                     list of sentences (str)
+               new_match (bs4.element.Tag):
+                     empty match tag
+               match_id (int):
+                     id of the matched sentence within sents
+               context (int):
+                     how many sentences of context to display around
+                     the matched sentence
+               highlight_query (bool):
+                     whether or not the query term(s) should be
+                     highlighted within the matched sentence
+    """
+    soup = BeautifulSoup()
+    if new_match is None:
+        new_match = soup.new_tag("match")
     if match_id is not None:
         start = max(match_id - context, 0)
         end = min(match_id + context + 1, len(sents))
-        soup = BeautifulSoup()
         new_match.append(" ".join([str(s) for s in sents[start:match_id]]))
         # correct for inconsistent tokenisation
         new_match.string = re.sub(r" ([.,;:!?])", r"\1", new_match.string)
@@ -207,10 +234,40 @@ def segment_match(match, new_match, highlight_query=False, context=2,
             tag.string = str(sents[match_id])
         new_match.append(tag)
         if end <= len(sents):
-            new_match.append(" " +
-                             re.sub(r" ([.,;:!?])", r"\1",
-                                " ".join([str(s) for s in sents[match_id+1:end]])))
+            new_match.append(
+                f' {" ".join([str(s) for s in sents[match_id+1:end]])}')
         return new_match
+
+
+def format_match(sents, match_id, context, highlight_query):
+    """return match as match sentence and lists of left and
+    right context sentences
+    Parameters:
+               sents (list):
+                     list of sentences (str)
+               match_id (int):
+                     id of the matched sentence within sents
+               context (int):
+                     how many sentences of context to display around
+                     the matched sentence
+               highlight_query (bool):
+                     whether or not the query term(s) should be
+                     highlighted within the matched sentence
+    """
+    if match_id is not None:
+        start = max(match_id - context, 0)
+        end = min(match_id + context + 1, len(sents))
+        left_context = [str(s) for s in sents[start:match_id]]
+        # correct for inconsistent tokenisation
+        # new_match.string = re.sub(r" ([.,;:!?])", r"\1", new_match.string)
+        # highlight the query match if needed
+        if highlight_query and query_matches:
+            pass
+        else:
+            match = sents[match_id]
+        if end <= len(sents):
+            right_context = [str(s) for s in sents[match_id+1:end]]
+        return {"left": left_context, "right": right_context, "match": match}
 
 
 def redefine_boundaries(sents):
@@ -262,10 +319,11 @@ def redefine_boundaries(sents):
                 if nb_abbr == len(has_abbrev):
                     has_abbrev.pop(-1)
         if split_on_poss:
-            sents[i] = str(sents[i]) + str(sents[i+1])
+            sents[i] = re.sub(r" ([.,;:!?])", r"\1",
+                              str(sents[i]) + str(sents[i+1]))
             del sents[i+1]
         else:
-            sents[i] = str(sents[i])
+            sents[i] = re.sub(r" ([.,;:!?])", r"\1", str(sents[i]))
     return sents
 
 
@@ -314,5 +372,5 @@ def compare_boundaries():
             else:
                 print("2:")
             print()
-        if input("continue? (Y/n)/n> ").casefold() == "n":
+        if input("continue? (Y/n)\n> ").casefold() == "n":
             break
