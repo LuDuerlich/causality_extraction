@@ -1,5 +1,6 @@
 from bs4 import BeautifulSoup
 from spacy.tokens.span import Span
+from search_terms import expanded_dict
 import spacy
 import pytest
 import copy
@@ -9,6 +10,7 @@ with open("samples/hit_samplereconstructed.xml") as ifile:
     mark_up = BeautifulSoup(ifile.read())
 # markup
 matches = mark_up.find_all('match')
+queries = mark_up.find_all('query')
 
 # string representations
 hits = [match.text for match in matches]
@@ -200,7 +202,7 @@ def format_xml_match(sents, new_match, match_id, context, highlight_query):
         end = min(match_id + context + 1, len(sents))
         new_match.append(" ".join([str(s) for s in sents[start:match_id]]))
         # correct for inconsistent tokenisation
-        new_match.string = re.sub(r" ([.,;:!?])", r"\1", new_match.string)
+        new_match.string = new_match.string
         # add a new tag for the highlighted sentence
         tag = soup.new_tag("em")
         tag.string = ""
@@ -258,9 +260,8 @@ def format_match(sents, match_id, context, highlight_query):
         start = max(match_id - context, 0)
         end = min(match_id + context + 1, len(sents))
         left_context = [str(s) for s in sents[start:match_id]]
-        # correct for inconsistent tokenisation
-        # new_match.string = re.sub(r" ([.,;:!?])", r"\1", new_match.string)
         # highlight the query match if needed
+        # not sure if this is needed here
         if highlight_query and query_matches:
             pass
         else:
@@ -354,6 +355,33 @@ def restructure_hit_sample():
         print("<xml>", file=ofile)
         format_output(matches, ofile)
         print("</xml>", file=ofile)
+
+
+def hit_sample_to_txt(remove_non_kw=False):
+    """print all matched sentences to text format and save
+    context in separate file"""
+    hits = "hit_sample.txt"
+    context = "context.txt"
+    if remove_non_kw:
+        hits = f'filtered_{hits}'
+        context = f'filtered_{context}'
+    with open(hits, "w") as hits,\
+         open(context, "w") as context:
+        if remove_non_kw:
+            for query in queries:
+                if query['term'].split("(")[0] in expanded_dict:
+                    matches = query.find_all("match")
+                    for match in matches:
+                        segments = segment_match(match, xml=False)
+                        print(segments['match'].lstrip('\n'), file=hits)
+                        print("\n".join(segments['left'] + segments['right']).lstrip('\n'),
+                              file=context)
+        else:
+            for i, match in enumerate(matches):
+                segments = segment_match(match, xml=False)
+                print(segments['match'].lstrip('\n'), file=hits)
+                print("\n".join(segments['left'] + segments['right']).lstrip('\n'),
+                      file=context)
 
 
 def compare_boundaries():
