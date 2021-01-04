@@ -144,26 +144,32 @@ def segment_match(match, new_match=None, highlight_query=False, context=2,
     query_matches = None
     # potentially useful later if the match sequence gets segmented
     # into multiple sentences
+    q_ex = None
+    match_sequence = None
     if match.b:
         query_matches = match("b")
-    q_ex = re.compile(r" *(\b\w+\b *)?".join([m.text for m in query_matches]))
-
-    match_sequence = match.em.text
+        q_ex = re.compile(r" *(\b\w+\b *)?".join([m.text for m in query_matches]))
+    if match.em:
+        match_sequence = match.em.text
+    else:
+        print("no match?", match)
     sents = []
     match_id = None
     match_by_term = None
     match_first_term = None
-    sequence = list(model(full_text).sents)
+    spacy_sents = model(full_text)
+    sequence = list(spacy_sents.sents)
     if redo_boundaries:
-        sequence = redefine_boundaries(model(full_text))
+        sequence = redefine_boundaries(spacy_sents)
+    # locate the matched sentence
     for i, sent in enumerate(sequence):
         if sent:
             sents.append(sent)
-            if match_sequence in str(sent):
+            if match_sequence and match_sequence in str(sent):
                 match_id = i
-            elif q_ex.search(str(sent)):
+            elif q_ex and q_ex.search(str(sent)):
                 match_by_term = i
-            elif query_matches[0].text in str(sent):
+            elif query_matches and query_matches[0].text in str(sent):
                 match_first_term = i
     # fall-back if the match sequence is now segmented differently
     if match_id is None and match_by_term is not None:
@@ -268,7 +274,7 @@ def format_match(sents, match_id, context, highlight_query):
             match = sents[match_id]
         if end <= len(sents):
             right_context = [str(s) for s in sents[match_id+1:end]]
-        return {"left": left_context, "right": right_context, "match": match}
+        return {"left": left_context, "right": right_context, "match": str(match)}
 
 
 def redefine_boundaries(sents):
@@ -282,16 +288,15 @@ def redefine_boundaries(sents):
     ents = [str(ent) for ent in sents.ents]
     sents = list(sents.sents)
     abr_exp = re.compile(r"(m\.m|osv|etc)\.")
-    poss_exp = re.compile(r"\w+:$")
+    # poss_exp = re.compile(r"\w+:$")
     for i in range(len(sents)):
-        if i >= len(sents):
+        if i+1 >= len(sents):
             break
         has_abbrev = abr_exp.findall(str(sents[i]))[::-1]
-        has_poss = poss_exp.findall(str(sents[i]))
-        split_on_poss = (has_poss and
-                         (i + 1 < len(sents) and str(sents[i+1])[:2] == "s "))
+        # has_poss = poss_exp.findall(str(sents[i]))
+        # split_on_poss = (has_poss and
+        #                 (i + 1 < len(sents) and str(sents[i+1])[:2] == "s "))
         if has_abbrev:
-            pad = 0
             if type(sents[i]) == Span:
                 tokens = list(sents[i].__iter__())
             else:
@@ -299,8 +304,6 @@ def redefine_boundaries(sents):
             last = None
             while has_abbrev:
                 nb_abbr = len(has_abbrev)
-                if str(tokens[-1]) == "(":
-                    pad = 1
                 for j, t in enumerate(tokens):
                     if not has_abbrev:
                         break
@@ -310,21 +313,23 @@ def redefine_boundaries(sents):
                             str(tokens[j+1]) not in ents):
                             has_abbrev.pop(-1)
                             new_s = " ".join(
-                                [tok.text for tok in tokens[j+1:]])
+                                [str(tok) for tok in tokens[j+1:]])
+                            # [tok if type(tok) == str else tok.text for tok in tokens[j+1:]])
                             following = sents[i+1:]
                             sents[i] = " ".join(
-                                [tok.text for tok in tokens[:j+1]])
+                                [str(tok) for tok in tokens[:j+1]])
+                            # [tok if type(tok) == str else tok.text for tok in tokens[:j+1]])
                             sents[i+1] = new_s
                             sents = sents[:i+2]
                             sents.extend(following)
                 if nb_abbr == len(has_abbrev):
                     has_abbrev.pop(-1)
-        if split_on_poss:
-            sents[i] = re.sub(r" ([.,;:!?])", r"\1",
-                              str(sents[i]) + str(sents[i+1]))
-            del sents[i+1]
-        else:
-            sents[i] = re.sub(r" ([.,;:!?])", r"\1", str(sents[i]))
+        # if split_on_poss:
+        #    sents[i] = re.sub(r" ([.,;:!?])", r"\1",
+        #                      str(sents[i]) + str(sents[i+1]))
+        #    del sents[i+1]
+        # else:
+        sents[i] = re.sub(r" ([.,;:!?])", r"\1", str(sents[i]))
     return sents
 
 
@@ -357,31 +362,69 @@ def restructure_hit_sample():
         print("</xml>", file=ofile)
 
 
-def hit_sample_to_txt(remove_non_kw=False):
+def hits_to_txt(queries=queries, remove_non_kw=False):
     """print all matched sentences to text format and save
-    context in separate file"""
-    hits = "hit_sample.txt"
+    context in separate file
+    Parameters:
+               queries (str or list):
+                      the match objects (organised by query) to print
+               remove_non_kw (bool):
+                      whether or not the query terms should be matched
+                      against the expanded dict again
+    """
+
+    if type(queries) == str:
+        with open(queries) as ifile:
+            mark_up = BeautifulSoup(ifile.read())
+            queries = mark_up.find_all('query')
+
+    hits="hit_sample.txt"
     context = "context.txt"
     if remove_non_kw:
         hits = f'filtered_{hits}'
         context = f'filtered_{context}'
-    with open(hits, "w") as hits,\
+    with open(hits, "w") as hit_file,\
          open(context, "w") as context:
         if remove_non_kw:
             for query in queries:
                 if query['term'].split("(")[0] in expanded_dict:
                     matches = query.find_all("match")
                     for match in matches:
-                        segments = segment_match(match, xml=False)
-                        print(segments['match'].lstrip('\n'), file=hits)
-                        print("\n".join(segments['left'] + segments['right']).lstrip('\n'),
-                              file=context)
+                        hits = match.find_all("hit")
+                        if hits:
+                            for hit in hits:
+                                if not hit.text:
+                                    continue
+                                segments = segment_match(hit, xml=False)
+                                print(segments['match'].lstrip('\n'), file=hit_file)
+                                print("\n".join(segments['left'] + segments['right']).lstrip('\n'),
+                                      file=context)
+
+                        else:
+                            segments = segment_match(match, xml=False)
+                            print(segments['match'].lstrip('\n'), file=hit_file)
+                            print("\n".join(segments['left'] + segments['right']).lstrip('\n'),
+                                  file=context)
         else:
-            for i, match in enumerate(matches):
-                segments = segment_match(match, xml=False)
-                print(segments['match'].lstrip('\n'), file=hits)
-                print("\n".join(segments['left'] + segments['right']).lstrip('\n'),
-                      file=context)
+            for query in queries:
+                matches = query.find_all("match")
+                for i, match in enumerate(matches):
+                    hits = match.find_all("hit")
+                    if hits:
+                        for hit in hits:
+                            if not hit.text:
+                                continue
+                            segments = segment_match(hit, xml=False)
+                            print(segments['match'].lstrip('\n'), file=hit_file)
+                            print("\n".join(segments['left'] + segments['right']).lstrip('\n'),
+                                  file=context)
+
+                    else:
+                        segments = segment_match(match, xml=False)
+                        if segments:
+                            print(segments['match'].lstrip('\n'), file=hit_file)
+                            print("\n".join(segments['left'] + segments['right']).lstrip('\n'),
+                                  file=context)
 
 
 def compare_boundaries():
