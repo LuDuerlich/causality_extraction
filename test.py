@@ -744,16 +744,13 @@ class MyOldSentenceFragmenter(Fragmenter):
                 currentlen = 0
         # If we get to the end of the text and there's still a sentence
         # in the buffer, yield it
+        if tks:
+            last_tks.append(tks)
+            match_sent_id.append(len(sents))
+            sents.append((first, endchar))
         if last_tks:
             for i in match_sent_id:
-                # if match_sent_id:
-                #     # account for matches at the beginning of the document
-                #     start_s = min(i, len(sents))
-                #     current_startchar = sents[max(start_s - context, 0)][0]
-                # else:
-                #     startchar = sents[max(len(sents) - context, 0)][0]
                 current_endchar = sents[min(i+context, len(sents) - 1)][-1]
-                # print(startchar, current_endchar, sents[i], len(sents), len(text))
                 yield mksentfrag(text, last_tks.pop(0),
                                  startchar=sents[max(i-context, 0)][0],
                                  endchar=min(current_endchar, endchar),
@@ -780,7 +777,7 @@ def create_index(path="test_index/", ixname="test", random_files=False,
                           whether or not to add the same previously
                           sampled files to the index
                           (useful to compare different index settings)
-"""
+    """
 
     if not path.endswith("/"):
         path += "/"
@@ -852,14 +849,19 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""]):
     """
 
     qp = QueryParser("body", schema=ix.schema)
-    sentf = MySentenceFragmenter(maxchars=1000)
+    # sentf = MySentenceFragmenter(maxchars=1000)
+    sentf = MyOldSentenceFragmenter(maxchars=100000, context_size=4)
     # analyzer = StandardAnalyzer(stoplist=[])
-    analyzer = BasicTokenizer(do_lower_case=False) | analysis.LowercaseFilter()
+    # analyzer = BasicTokenizer(do_lower_case=False) | analysis.LowercaseFilter()
     formatter = MyFormatter(between="\n...")
-    highlighter = MyHighlighter(fragmenter=sentf,
-                                analyzer=analyzer,
-                                scorer=BasicFragmentScorer(),
-                                formatter=formatter)
+    highlighter = Highlighter(fragmenter=sentf,
+                              scorer=BasicFragmentScorer(),
+                              formatter=formatter)
+    
+    # highlighter = MyHighlighter(fragmenter=sentf,
+    #                             analyzer=analyzer,
+    #                             scorer=BasicFragmentScorer(),
+    #                             formatter=formatter)
     punct = re.compile(r"[!.?]")
     filename = "example_queries_inflected.xml"
     print("Index:", ix)
@@ -958,7 +960,7 @@ def print_sample_file(keywords=expanded_dict, same_matches=None):
                                          same_matches[key],
                                          match_order[key])
             elif len(matches) > 10:
-                match_ids = random.sample(match_ids, 10)
+                match_ids = random.sample(matches, 10)
             else:
                 match_ids = list(range(len(matches)))
             print(f"Query {key}: {len(matches)} matches")
@@ -1015,7 +1017,7 @@ def find_matched(matches, match_dict, order):
 def extract_sample():
     """extract matches and metadata from previously sampled queries"""
 
-    with open("hit_sample.xml") as ifile:
+    with open("samples/hit_sample.xml") as ifile:
         soup = bs4.BeautifulSoup(ifile.read())
     queries = {}
     for query in soup.find_all("query"):
@@ -1038,5 +1040,7 @@ if __name__ == "__main__":
                     sec_title=TEXT(stored=True, analyzer=analyzer),
                     body=TEXT(stored=True, phrase=True, analyzer=analyzer))
     # ix = index.open_dir("test_index", indexname="test")
-    ix = index.open_dir("bigger_index", indexname="big_index")
+    # ix = index.open_dir("bigger_index", indexname="big_index")
     # ix = index.open_dir("big_bt_index", indexname="bt_index")
+    # query_list = [wf for term in expanded_dict.values() for wf in term]
+    # print_to_file(query_list)
