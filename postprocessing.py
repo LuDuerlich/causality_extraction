@@ -4,6 +4,7 @@ from search_terms import expanded_dict
 import spacy
 import pytest
 import copy
+import csv
 import re
 
 with open("samples/hit_samplereconstructed.xml") as ifile:
@@ -118,14 +119,14 @@ def test_lms():
     assert try_language_models(m1, m2, ix=range(len(hits)))
 
 
-def segment_match(match, new_match=None, highlight_query=False, context=2,
+def segment_match(match, query, highlight_query=False, context=2,
                   redo_boundaries=True, xml=True):
     """Split a whoosh match into sentences
     Parameters:
                match (bs4.element.Tag):
                      query match in context
-               new_match (bs4.element.Tag):
-                     empty match tag
+               query (str):
+                     representation of the original query
                highlight_query (bool):
                      whether or not the query term(s) should be
                      highlighted within the matched sentence
@@ -147,50 +148,89 @@ def segment_match(match, new_match=None, highlight_query=False, context=2,
     q_ex = None
     match_sequence = None
     if match.b:
-        query_matches = match("b")
-        q_ex = re.compile(r" *(\b\w+\b *)?".join([m.text for m in query_matches]))
+        query_matches = separate_query_terms(match("b"), query)
+        query_matches = [r" *(\b.+\b *)?".join(t) for t in query_matches]
+        q_ex = re.compile(r'|'.join(query_matches))
     if match.em:
         match_sequence = match.em.text
     else:
         print("no match?", match)
     sents = []
-    match_id = None
-    match_by_term = None
-    match_first_term = None
+    match_id = []
+    match_by_term = []
+    match_first_term = []
     spacy_sents = model(full_text)
     sequence = list(spacy_sents.sents)
     if redo_boundaries:
         sequence = redefine_boundaries(spacy_sents)
     # locate the matched sentence
+    j = 0
     for i, sent in enumerate(sequence):
         if sent:
             sents.append(sent)
             if match_sequence and match_sequence in str(sent):
-                match_id = i
+                match_id.append(i)
             elif q_ex and q_ex.search(str(sent)):
-                match_by_term = i
-            elif query_matches and query_matches[0].text in str(sent):
-                match_first_term = i
+                match_by_term.append(i)
+            elif query_matches and query_matches[j] in str(sent):
+                match_first_term.append(i)
+                j += 1
     # fall-back if the match sequence is now segmented differently
-    if match_id is None and match_by_term is not None:
+    if not match_id and match_by_term:
         match_id = match_by_term
-    if match_id is None and match_first_term is not None:
+    if not match_id and match_first_term:
         match_id = match_first_term
+    try:
+        match_s = " ".join([str(sequence[j]) for j in match_id])
+    except:
+        print([sequence[j] for j in match_id])
+        print(query_matches, q_ex, end=", ")
+        print(match.text, match.em)
+    assert q_ex.search(match_s),
+    f"Search term not in match ('{q_ex}', '{match_s}', " +\
+    f"'{match_id}', {match.text}, {match.em})"
     if xml:
-        return format_xml_match(sents, new_match, match_id,
+        return format_xml_match(sents, match_id,
                                 context, highlight_query)
     else:
         return format_match(sents, match_id,
                             context, highlight_query)
 
 
-def format_xml_match(sents, new_match, match_id, context, highlight_query):
+def separate_query_terms(query_terms, query_exp):
+    terms = []
+    new_term = True
+    for i, term in enumerate(query_terms):
+        t = term.text
+        context = ""
+        # add previous token to the match string
+        previous = model(str(term.previous_sibling))
+        if str(previous) not in ["None", " ", ""]:
+            previous = str(previous[-1])
+            if i > 0 and previous not in [query_terms[i-1], ".", "?", "!"]:
+                context = re.sub(r'([\[\])(\\?+*])', r'\\\1', previous)
+                # print(f'previous: "{previous}" "{context}"')
+        if not new_term:
+            if f'| {" ".join(terms[-1])} |'.casefold() in query_exp:
+                new_term = True
+            elif f'{" ".join(terms[-1] + [t])} '.casefold() in query_exp:
+                terms[-1].append(f'{context} *{t}')
+                continue
+        # start of a new term
+        if new_term:
+            if f'| {t} |'.casefold() in query_exp:
+                terms.append([f'{context} *{t}'])
+            elif f'| {t} '.casefold() in query_exp:
+                terms.append([f'{context} *{t}'])
+                new_term = False
+    return terms
+
+
+def format_xml_match(sents, match_id, context, highlight_query):
     """format match in xml style. Returns a filled bs4.element.Tag
     Parameters:
                sents (list):
                      list of sentences (str)
-               new_match (bs4.element.Tag):
-                     empty match tag
                match_id (int):
                      id of the matched sentence within sents
                context (int):
@@ -201,50 +241,52 @@ def format_xml_match(sents, new_match, match_id, context, highlight_query):
                      highlighted within the matched sentence
     """
     soup = BeautifulSoup()
-    if new_match is None:
-        new_match = soup.new_tag("match")
-    if match_id is not None:
-        start = max(match_id - context, 0)
-        end = min(match_id + context + 1, len(sents))
-        new_match.append(" ".join([str(s) for s in sents[start:match_id]]))
-        # correct for inconsistent tokenisation
-        new_match.string = new_match.string
-        # add a new tag for the highlighted sentence
-        tag = soup.new_tag("em")
-        tag.string = ""
-        # highlight the query match if needed
-        if highlight_query and query_matches:
-            q_tags = {}
-            tag_order = []
-            for q in query_matches:
-                q_tag = soup.new_tag("b")
-                text = q.text
-                q_tag.append(text)
-                if text in q_tags:
-                    q_tags[text].append(q_tag)
-                else:
-                    q_tags[text] = [q_tag]
-                tag_order.append(text)
-            for token in sents[match_id].split():
-                text = str(token)
-                if tag_order and text == tag_order[0]:
-                    tag.append(" ")
-                    tag.append(q_tags[text].pop(0))
-                    tag_order.pop(0)
-                    if not q_tags[text]:
-                        del q_tags[text]
-                else:
-                    if text in ".,;:!?":
-                        tag.append(text)
+    new_matches = []
+    if match_id:
+        for id_ in id_:
+            new_match = soup.new_tag("match")
+            start = max(id_ - context, 0)
+            end = min(id_ + context + 1, len(sents))
+            new_match.append(" ".join([str(s) for s in sents[start:id_]]))
+            # correct for inconsistent tokenisation
+            new_match.string = new_match.string
+            # add a new tag for the highlighted sentence
+            tag = soup.new_tag("em")
+            tag.string = ""
+            # highlight the query match if needed
+            if highlight_query and query_matches:
+                q_tags = {}
+                tag_order = []
+                for q in query_matches:
+                    q_tag = soup.new_tag("b")
+                    text = q.text
+                    q_tag.append(text)
+                    if text in q_tags:
+                        q_tags[text].append(q_tag)
                     else:
-                        tag.append(" " + text)
-        else:
-            tag.string = str(sents[match_id])
-        new_match.append(tag)
-        if end <= len(sents):
-            new_match.append(
-                f' {" ".join([str(s) for s in sents[match_id+1:end]])}')
-        return new_match
+                        q_tags[text] = [q_tag]
+                    tag_order.append(text)
+                for token in sents[id_].split():
+                    text = str(token)
+                    if tag_order and text == tag_order[0]:
+                        tag.append(" ")
+                        tag.append(q_tags[text].pop(0))
+                        tag_order.pop(0)
+                        if not q_tags[text]:
+                            del q_tags[text]
+                    else:
+                        if text in ".,;:!?":
+                            tag.append(text)
+                        else:
+                            tag.append(" " + text)
+            else:
+                tag.string = str(sents[id_])
+            new_match.append(tag)
+            if end <= len(sents):
+                new_match.append(
+                    f' {" ".join([str(s) for s in sents[id_+1:end]])}')
+            new_matches.append(new_match)
+        return new_matches
 
 
 def format_match(sents, match_id, context, highlight_query):
@@ -262,19 +304,24 @@ def format_match(sents, match_id, context, highlight_query):
                      whether or not the query term(s) should be
                      highlighted within the matched sentence
     """
-    if match_id is not None:
-        start = max(match_id - context, 0)
-        end = min(match_id + context + 1, len(sents))
-        left_context = [str(s) for s in sents[start:match_id]]
-        # highlight the query match if needed
-        # not sure if this is needed here
-        if highlight_query and query_matches:
-            pass
-        else:
-            match = sents[match_id]
-        if end <= len(sents):
-            right_context = [str(s) for s in sents[match_id+1:end]]
-        return {"left": left_context, "right": right_context, "match": str(match)}
+    if match_id:
+        matches = []
+        for id_ in match_id:
+            start = max(id_ - context, 0)
+            end = min(id_ + context + 1, len(sents))
+            left_context = [str(s) for s in sents[start:id_]]
+            # highlight the query match if needed
+            # not sure if this is needed here
+            if highlight_query and query_matches:
+                pass
+            else:
+                match = sents[id_]
+            if end <= len(sents):
+                right_context = [str(s) for s in sents[id_+1:end]]
+        matches.append({"left": left_context,
+                        "right": right_context,
+                        "match": str(match)})
+    return matches
 
 
 def redefine_boundaries(sents):
@@ -314,11 +361,9 @@ def redefine_boundaries(sents):
                             has_abbrev.pop(-1)
                             new_s = " ".join(
                                 [str(tok) for tok in tokens[j+1:]])
-                            # [tok if type(tok) == str else tok.text for tok in tokens[j+1:]])
                             following = sents[i+1:]
                             sents[i] = " ".join(
                                 [str(tok) for tok in tokens[:j+1]])
-                            # [tok if type(tok) == str else tok.text for tok in tokens[:j+1]])
                             sents[i+1] = new_s
                             sents = sents[:i+2]
                             sents.extend(following)
@@ -330,27 +375,33 @@ def redefine_boundaries(sents):
         #    del sents[i+1]
         # else:
         sents[i] = re.sub(r" ([.,;:!?])", r"\1", str(sents[i]))
+        sents = [str(s) for s in sents]
     return sents
 
 
-def format_output(matches, dest=None):
+def format_output(queries, dest=None):
     """reformat query matches and write them to dest
     Parameter:
-              matches (bs4.element.ResultSet):
-                      result set of all matches in a document
+              queries (bs4.element.ResultSet):
+                      result set of all queries in a document
               dest (BufferedWriter):
                       an opened file to write to (optional)
     """
 
     new_matches = BeautifulSoup()
     i = 0
-    for match in matches:
-        i += 1
-        new_match = new_matches.new_tag("match")
-        new_match.attrs = match.attrs
-        segment_match(match, new_match, True)
-        if new_match.text:
-            new_matches.append(new_match)
+    for query in queries:
+        matches = query.find_all('match')
+        query_exp = [t.split("(")[1].replace('"', '').replace(')', '')
+                     .replace('~2', '').replace('OR', '|') for t in terms]
+
+        for match in matches:
+            i += 1
+            _matches = segment_match(match, query_exp, new_match, True)
+            for new_match in _matches:
+                new_match.attrs = match.attrs
+                if new_match.text:
+                    new_matches.append(new_match)
 
     print(new_matches, file=dest)
 
@@ -373,58 +424,104 @@ def hits_to_txt(queries=queries, remove_non_kw=False):
                       against the expanded dict again
     """
 
+    matches = None
     if type(queries) == str:
         with open(queries) as ifile:
             mark_up = BeautifulSoup(ifile.read())
             queries = mark_up.find_all('query')
-
-    hits="hit_sample.txt"
-    context = "context.txt"
+            hit_dict = {}
+            if queries[0].find_all('match')[0].find_all('hit'):
+                for query in queries:
+                    for matches in query.find_all('match'):
+                        for m in matches:
+                            print(m)
+                            key = (m['doc'], m['section'])
+                            if key not in hit_dict:
+                                hit_dict[key] = {}
+                            for hit in m.find_all('hit'):
+                                hit_dict[key].add(hit)
+            matches = set([{'doc': k[0], 'section': k[1], 'match': h}
+                           for k, v in hit_dict.items() for h in v])
+    terms = [q['term'] for q in queries]
+    query_exp = " ".join(
+        [t.replace('"', '').replace(')', '')
+         .replace('~2', '').replace('OR', '|')
+         for t in terms])
+    hits = "hit_sample.csv"
+    context = "context.csv"
     if remove_non_kw:
         hits = f'filtered_{hits}'
         context = f'filtered_{context}'
     with open(hits, "w") as hit_file,\
          open(context, "w") as context:
+        hit_writer = csv.writer(hit_file, delimiter=";")
+        context_writer = csv.writer(context, delimiter=";")
         if remove_non_kw:
             for query in queries:
                 if query['term'].split("(")[0] in expanded_dict:
-                    matches = query.find_all("match")
+                    if not matches:
+                        matches = query.find_all("match")
                     for match in matches:
+                        match_data = (match['doc'], match['section'])
                         hits = match.find_all("hit")
                         if hits:
                             for hit in hits:
                                 if not hit.text:
                                     continue
-                                segments = segment_match(hit, xml=False)
-                                print(segments['match'].lstrip('\n'), file=hit_file)
-                                print("\n".join(segments['left'] + segments['right']).lstrip('\n'),
-                                      file=context)
+                                segments = segment_match(hit,
+                                                         query_exp,  xml=False)
+                                for segment in segments:
+                                    hit_writer.writerow(
+                                        [*match_data,
+                                         segment['match'].lstrip('\n')])
+                                    context_writer.writerow(
+                                        [*match_data,
+                                         ' '.join(segment['left']),
+                                         ' '.join(segment['rightt'])])
 
                         else:
-                            segments = segment_match(match, xml=False)
-                            print(segments['match'].lstrip('\n'), file=hit_file)
-                            print("\n".join(segments['left'] + segments['right']).lstrip('\n'),
-                                  file=context)
+                            if type(match) == dict:
+                                match = match['match']
+                            segments = segment_match(match,
+                                                     query_exp, xml=False)
+                            for segment in segments:
+                                hit_writer.writerow(
+                                    [*match_data,
+                                     segment['match'].lstrip('\n')])
+                                context_writer.writerow(
+                                    [*match_data, ' '.join(segment['left']),
+                                     ' '.join(segment['right'])])
+
         else:
             for query in queries:
-                matches = query.find_all("match")
+                if not matches:
+                    matches = query.find_all("match")
                 for i, match in enumerate(matches):
+                    match_data = (match['doc'], match['section'])
                     hits = match.find_all("hit")
                     if hits:
                         for hit in hits:
                             if not hit.text:
                                 continue
-                            segments = segment_match(hit, xml=False)
-                            print(segments['match'].lstrip('\n'), file=hit_file)
-                            print("\n".join(segments['left'] + segments['right']).lstrip('\n'),
-                                  file=context)
-
+                            segments = segment_match(hit,
+                                                     query_exp, xml=False)
+                            for segment in segments:
+                                hit_writer.writerow(
+                                    [*match_data,
+                                     segment['match'].lstrip('\n')])
+                                context_writer.writerow(
+                                    [*match_data, ' '.join(segment['left']),
+                                     ' '.join(segment['right'])])
                     else:
-                        segments = segment_match(match, xml=False)
-                        if segments:
-                            print(segments['match'].lstrip('\n'), file=hit_file)
-                            print("\n".join(segments['left'] + segments['right']).lstrip('\n'),
-                                  file=context)
+                        if type(match) == dict:
+                            match = match['match']
+                        segments = segment_match(match, query_exp, xml=False)
+                        for segment in segments:
+                            hit_writer.writerow(
+                                [*match_data, segment['match'].lstrip('\n')])
+                            context_writer.writerow(
+                                [*match_data, ' '.join(segment['left']),
+                                 ' '.join(segment['right'])])
 
 
 def compare_boundaries():
