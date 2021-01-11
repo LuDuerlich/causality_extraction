@@ -879,26 +879,30 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""]):
             print(f"<query term='{_query}'>", file=output)
             parsed_query = qp.parse(_query)
             r = s.search(parsed_query, terms=True, limit=None)
-            for i, matched_s in enumerate(r):
-                matched_s.results.order = FIRST
-                title = escape_xml_refs(matched_s['doc_title'])
-                sec_title = escape_xml_refs(matched_s['sec_title'])
+            matches = [(hit, m) for m in r
+                       for hit in highlighter.highlight_hit(
+                               m, "body", top=len(m.results),
+                               strict_phrase='"' in _query)]
+            for i, matched_s in enumerate(matches):
+                #matched_s.results.order = FIRST
+                title = escape_xml_refs(matched_s[1]['doc_title'])
+                sec_title = escape_xml_refs(matched_s[1]['sec_title'])
                 print(f"<match match_nb='{i}'",
                       f"doc='{strip_tags(title)}'",
                       f"section='{sec_title}'>",
                       file=output)
-                assert len(matched_s.results) == len(r)
-                hits = highlighter.highlight_hit(
-                    matched_s, "body",
-                    # top = 10,
-                    # to get all matches
-                    top=len(matched_s.results),
-                    strict_phrase='"' in _query)
-                for j, hit in enumerate(hits):
-                    print(f"<hit hit_nb='{j}'>", file=output)
-                    print(escape_xml_refs(hit),
-                          file=output)
-                    print("</hit>", file=output)
+                print(re.sub("&", "&amp;", matched_s[0]), file=output)
+                # hits = highlighter.highlight_hit(
+                #     matched_s, "body",
+                #     # top = 10,
+                #     # to get all matches
+                #     top=len(matched_s.results),
+                #     strict_phrase='"' in _query)
+                # for j, hit in enumerate(hits):
+                #     print(f"<hit hit_nb='{j}'>", file=output)
+                #     print(escape_xml_refs(hit),
+                #           file=output)
+                #     print("</hit>", file=output)
                 print("</match>", file=output)
             print("</query>", file=output)
         print("</xml>", file=output)
