@@ -1,6 +1,7 @@
 from data_extraction import Text
 import bs4
 import copy
+from html.entities import html5
 import tarfile
 import re
 import sys
@@ -16,13 +17,75 @@ import glob
 import pickle
 import unicodedata
 
-schema = None
+analyzer = StandardAnalyzer(stoplist=[])
+schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer),
+                sec_title=TEXT(stored=True, analyzer=analyzer),
+                body=TEXT(stored=True, phrase=True, analyzer=analyzer))
+
+htmlchars2ents = {char: entity for entity, char in html5.items()}
+xmlchars2ents = {'"': 'quot;',
+                 "'": 'apos;',
+                 "<": 'lt;',
+                 ">": 'gt;'}
+
+
+def remove_ents(string):
+    for c, e in xmlchars2ents.items():
+        string = string.replace(f'&{e}', c)
+    return string
+
+
+def fix_file(filename):
+    if filename.endswith('.html'):
+        markup = 'html'
+    elif filename.endswith('.xml'):
+        markup = 'xml'
+    with open(filename) as ifile:
+        soup = bs4.BeautifulSoup(ifile.read(), parser=markup)
+    text = write_markup(str(soup), markup)
+    out = filename.split('/')
+    out = f"{'/'.join(out[:-1])}/new_{out[-1]}"
+    print(out)
+    with open(out, 'w') as ofile:
+        ofile.write(text)
+
+
+def write_markup(string, format='xml'):
+    """replace all reserved html/xml characters with their character entity"""
+    has_semicolon = ';' in string
+    # get these two out of the way before considering other entities
+    if '&' in string:
+        string = string.replace('&', '&' + htmlchars2ents['&'])
+    if format == 'html':
+        if has_semicolon:
+            string = string.replace(';', '&' + htmlchars2ents[';'])
+            string = string.replace('&amp&semi;', '&amp;')
+
+        for char in string:
+            if char in htmlchars2ents and char not in '&;':
+                string = string.replace(char, f'&{htmlchars2ents[char]}')
+    elif format == 'xml':
+        for char in string:
+            if char in xmlchars2ents and char != '&':
+                string = string.replace(f' {char} ',
+                                        f' &{xmlchars2ents[char]} ')
+    # account for highlighting and other markup
+    if format == 'html':
+        string = re.sub(
+            r'&lt;link( \w+&equals;[&;a-zA-Z0-9]+)+&quot;&sol;&gt;(&NewLine;)?',
+            '<link rel="stylesheet" href="style.css"/>', string)
+
+    string = re.sub(r'&lt;&sol;([A-Za-z1-9]+)&gt;', r'&lt;/\1&gt;', string)
+    string = re.sub(r'&lt;(/?[A-Za-z1-9]+)&gt;&NewLine;', r'<\1>\n', string)
+    string = re.sub(r'&lt;(/?[A-Za-z1-9]+)&gt;', r'<\1>', string)
+    return string
 
 
 def strip_tags(string):
     """strip title tags from string"""
 
     return re.sub("<h1>|</h1>", "", string)
+
 
 def use_tarfile():
     """access files in tar archive"""
@@ -35,6 +98,7 @@ def use_tarfile():
                 pass
             # document is a file buffer and can now be read
     t.close()
+
 
 class BasicTokenizer(analysis.Composable):
     """
@@ -758,7 +822,7 @@ class MyOldSentenceFragmenter(Fragmenter):
 
 
 def create_index(path="test_index/", ixname="test", random_files=False,
-                 schema=schema, add=False):
+                 schema=schema, add=False, filenames=None):
     """Create or add to a specified index.
 
     Parameters:
@@ -787,7 +851,7 @@ def create_index(path="test_index/", ixname="test", random_files=False,
         ).casefold() != "y":
             ix = index.open_dir(path, indexname=ixname)
         else:
-            print(f"clearing ouf {path}")
+            print(f"clearing out {path}")
             os.system(f"rm -r {path}*")
             ix = index.create_in(path, schema, indexname=ixname)
     else:
@@ -796,29 +860,40 @@ def create_index(path="test_index/", ixname="test", random_files=False,
     if random_files:
         with open("ix_files.pickle", "rb") as ifile:
             seen = pickle.load(ifile)
+            print(f'loading {len(seen)} seen files!')
         if not add:
             files = seen
         else:
-            # todo: adapt to tarfile
-            files = random.sample([el for el in glob.glob("documents/s_*")
+            with tarfile.open("documents.tar", "r") as ifile:
+                summaries = [fi for fi in ifile.getnames() if
+                             fi.startswith('documents/s_')]
+            files = random.sample([el for el in summaries
                                    if el not in seen], 500)
-        # I don't remember why this is here
-        seen.extend(files)
-        with open("bt_ix_files.pickle", "wb") as ofile:
-            pickle.dump(seen, ofile)
+            # I don't remember why this is here
+            seen.extend(files)
+            with open("bt_ix_files.pickle", "wb") as ofile:
+                pickle.dump(seen, ofile)
+    elif filenames:
+        print('index selected files')
+        files = filenames
     else:
         files = ["H2B34", "H2B340", "H2B341", "H2B341", "H2B342",
                  "H2B343", "H2B344", "H2B345", "H2B346", "H2B347",
                  "H2B348", "H2B349", "H2B35"]
     with tarfile.open("documents.tar", "r") as ifile:
-        for k in files:
+        n_files = len(files)
+        print(f'{n_files} to be indexed')
+        for i, k in enumerate(files):
             text = Text("")
             if k.endswith("html"):
                 text.from_html(ifile.extractfile(k).read())
                 k = k.split("_")[1].split(".")[0]
             else:
-                text.from_html(f"documents/s_{k}.html")
-            for section in text:
+                text.from_html(
+                    ifile.extractfile(
+                        f"documents/s_{k}.html"
+                    ).read())
+            for j, section in enumerate(text):
                 writer.add_document(doc_title=re.sub(r'\s+',
                                                      ' ',
                                                      text.title) + f" {k}",
@@ -826,6 +901,8 @@ def create_index(path="test_index/", ixname="test", random_files=False,
                                                      ' ', section.title),
                                     body=re.sub(r'\s+', ' ',
                                                 "\n".join(section.text)))
+            if i % 50 == 0:
+                print(f'at file {i} ({text.title, k}), it has {j+1} sections')
     writer.commit()
 
 
@@ -851,13 +928,11 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""]):
     qp = QueryParser("body", schema=ix.schema)
     # sentf = MySentenceFragmenter(maxchars=1000)
     sentf = MyOldSentenceFragmenter(maxchars=100000, context_size=4)
-    # analyzer = StandardAnalyzer(stoplist=[])
-    # analyzer = BasicTokenizer(do_lower_case=False) | analysis.LowercaseFilter()
     formatter = MyFormatter(between="\n...")
     highlighter = Highlighter(fragmenter=sentf,
                               scorer=BasicFragmentScorer(),
                               formatter=formatter)
-    
+
     # highlighter = MyHighlighter(fragmenter=sentf,
     #                             analyzer=analyzer,
     #                             scorer=BasicFragmentScorer(),
@@ -875,7 +950,6 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""]):
                 _query = f"{term} AND ({' OR '.join(keywords)})"
             else:
                 _query = ' OR '.join(keywords)
-                # ["orsak", "\"bidrar till\"", "\"på grund av\""]
             print(f"<query term='{_query}'>", file=output)
             parsed_query = qp.parse(_query)
             r = s.search(parsed_query, terms=True, limit=None)
@@ -884,14 +958,14 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""]):
                                m, "body", top=len(m.results),
                                strict_phrase='"' in _query)]
             for i, matched_s in enumerate(matches):
-                #matched_s.results.order = FIRST
+                # matched_s.results.order = FIRST
                 title = escape_xml_refs(matched_s[1]['doc_title'])
                 sec_title = escape_xml_refs(matched_s[1]['sec_title'])
                 print(f"<match match_nb='{i}'",
                       f"doc='{strip_tags(title)}'",
                       f"section='{sec_title}'>",
                       file=output)
-                print(re.sub("&", "&amp;", matched_s[0]), file=output)
+                print(write_markup(matched_s[0]), file=output)
                 # hits = highlighter.highlight_hit(
                 #     matched_s, "body",
                 #     # top = 10,
@@ -975,7 +1049,7 @@ def print_sample_file(keywords=expanded_dict, same_matches=None):
                           f"doc='{strip_tags(matches[i][1]['doc_title'])}'",
                           f"section='{matches[i][1]['sec_title']}'>",
                           file=output)
-                    print(re.sub("&", "&amp;", matches[i][0]), file=output)
+                    print(write_markup(matches[i][0]), file=output)
                     print("</match>", file=output)
 
             print("</query>", file=output)
@@ -1043,8 +1117,12 @@ if __name__ == "__main__":
     schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer),
                     sec_title=TEXT(stored=True, analyzer=analyzer),
                     body=TEXT(stored=True, phrase=True, analyzer=analyzer))
+    ix = index.open_dir("yet_another_ix", indexname="big_index")
     # ix = index.open_dir("test_index", indexname="test")
     # ix = index.open_dir("bigger_index", indexname="big_index")
     # ix = index.open_dir("big_bt_index", indexname="bt_index")
     # query_list = [wf for term in expanded_dict.values() for wf in term]
     # print_to_file(query_list)
+    # To create new index
+    # create_index('bigger_index', schema=schema,
+    # ixname='big_index', random_files=True)
