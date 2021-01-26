@@ -4,7 +4,7 @@ from whoosh import index, query, fields, analysis
 from whoosh.util.testing import TempIndex
 from whoosh.qparser import QueryParser
 from whoosh.highlight import Highlighter
-from test import MyFormatter, MySentenceFragmenter, BasicTokenizer, MyHighlighter
+from keyword_search import MyFormatter, MySentenceFragmenter, BasicTokenizer, MyHighlighter
 
 text = """This is a sentence. Here's another one. How about some abbreviations, \
 e.g. 'etc.' or 'et. al.'? How will this text end? We are about to find out. \
