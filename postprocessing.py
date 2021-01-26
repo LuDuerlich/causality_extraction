@@ -187,8 +187,8 @@ def segment_match(match, query, highlight_query=False, context=2,
         print(query_matches, q_ex, end=", ")
         print(match.text, match.em)
     assert q_ex.search(match_s),\
-    f"Search term not in match ('{q_ex}', '{match_s}', " +\
-    f"'{match_id}', {match.text}, {match.em})"
+        f"Search term not in match ('{q_ex}', '{match_s}', " +\
+        f"'{match_id}', {match.text}, {match.em})"
     if xml:
         return format_xml_match(sents, match_id,
                                 context, highlight_query,
@@ -212,9 +212,11 @@ def separate_query_terms(query_terms, query_exp):
                 context = re.sub(r'([\[\])(\\?+*])', r'\\\1', previous)
                 # print(f'previous: "{previous}" "{context}"')
         if not new_term:
-            if f'| {" ".join(terms[-1])} |'.casefold().replace('*', '') in query_exp:
+            if f'| {" ".join(terms[-1])} |'.casefold()\
+                                           .replace('*', '') in query_exp:
                 new_term = True
-            elif f'{" ".join(terms[-1] + [t])} '.casefold().replace('*', '') in query_exp:
+            elif f'{" ".join(terms[-1] + [t])} '.casefold()\
+                                                .replace('*', '') in query_exp:
                 terms[-1].append(f'{context} *{t}')
                 continue
         # start of a new term
@@ -338,14 +340,11 @@ def redefine_boundaries(sents):
     ents = [str(ent) for ent in sents.ents]
     sents = list(sents.sents)
     abr_exp = re.compile(r"(m\.m|osv|etc)\.")
-    # poss_exp = re.compile(r"\w+:$")
+    poss_exp = re.compile(r"\b[A-ZÄÖÅ0-9]+\b:$")
     for i in range(len(sents)):
         if i+1 >= len(sents):
             break
         has_abbrev = abr_exp.findall(str(sents[i]))[::-1]
-        # has_poss = poss_exp.findall(str(sents[i]))
-        # split_on_poss = (has_poss and
-        #                 (i + 1 < len(sents) and str(sents[i+1])[:2] == "s "))
         if has_abbrev:
             if type(sents[i]) == Span:
                 tokens = list(sents[i].__iter__())
@@ -372,12 +371,24 @@ def redefine_boundaries(sents):
                             sents.extend(following)
                 if nb_abbr == len(has_abbrev):
                     has_abbrev.pop(-1)
-        # if split_on_poss:
-        #    sents[i] = re.sub(r" ([.,;:!?])", r"\1",
-        #                      str(sents[i]) + str(sents[i+1]))
-        #    del sents[i+1]
-        # else:
-        sents[i] = re.sub(r" ([.,;:!?])", r"\1", str(sents[i]))
+
+        # possessives of acronyms etc. tend to get split at the colon
+        # i.e. 'EU:s direktiv ...' -> 'EU:', 's direktiv ...'
+        has_poss = poss_exp.findall(str(sents[i]))
+        split_on_poss = (has_poss and
+                         (i + 1 < len(sents)
+                          and re.match('[a-zäåö]', str(sents[i+1])[:2])))
+        if split_on_poss:
+            sents[i] = re.sub(r" ([.,;:!?])", r"\1",
+                              str(sents[i]) + str(sents[i+1]))
+            del sents[i+1]
+        else:
+            sents[i] = re.sub(r" ([.,;:!?])", r"\1", str(sents[i]))
+
+        # sentences that start with parentheses are split at open parentheses
+        if str(sents[i]).endswith("(") and i + 1 < len(sents):
+            sents[i] = str(sents[i]).rstrip(' (')
+            sents[i+1] = '(' + str(sents[i+1]).lstrip()
         sents = [str(s) for s in sents]
     return sents
 
@@ -464,35 +475,19 @@ def hits_to_txt(queries=queries, remove_non_kw=False):
                 if query['term'].split("(")[0] in expanded_dict:
                     matches = query.find_all("match")
                     for match in matches:
-                        match_data = (q_term+ f'_{match["match_nb"]}', match['doc'].strip("\n"), match['section'].strip("\n"))
-                        hits = match.find_all("hit")
-                        # if hits:
-                        #     for hit in hits:
-                        #         if not hit.text:
-                        #             continue
-                        #         segments = segment_match(hit,
-                        #                                  query_exp,  xml=False)
-                        #         for segment in segments:
-                        #             hit_writer.writerow(
-                        #                 [*match_data,
-                        #                  segment['match'].lstrip('\n')])
-                        #             context_writer.writerow(
-                        #                 [*match_data,
-                        #                  ' '.join(segment['left']),
-                        #                  ' '.join(segment['rightt'])])
-
-                        # else:
+                        match_data = (q_term + f'_{match["match_nb"]}',
+                                      match['doc'].strip("\n"),
+                                      match['section'].strip("\n"))
                         if type(match) == dict:
                             match = match['match']
                         segments = segment_match(match,
-                                                 query_exp, xml=False)
+                                                 query_exp,
+                                                 xml=False)
                         for segment in segments:
                             hit_writer.writerow(
                             [*match_data,
                              ' '.join(segment['left']),
                              segment['match'].lstrip('\n'),
-                             #context_writer.writerow(
-                             #    [*match_data,
                              ' '.join(segment['right'])])
 
         else:
@@ -504,24 +499,12 @@ def hits_to_txt(queries=queries, remove_non_kw=False):
                 matches = query.find_all("match")
                 for i, match in enumerate(matches):
                     if parenthesis_format:
-                        match_data = (q_term+ f'_{match["match_nb"]}', match['doc'].strip("\n"), match['section'].strip("\n"))
+                        match_data = (q_term + f'_{match["match_nb"]}',
+                                      match['doc'].strip("\n"),
+                                      match['section'].strip("\n"))
                     else:
-                        match_data = (match['doc'].strip("\n"), match['section'].strip("\n"))
-                    hits = match.find_all("hit")
-                    # if hits:
-                    #     for hit in hits:
-                    #         if not hit.text:
-                    #             continue
-                    #         segments = segment_match(hit,
-                    #                                  query_exp, xml=False)
-                    #         for segment in segments:
-                    #             hit_writer.writerow(
-                    #                 [*match_data,
-                    #                  segment['match'].lstrip('\n')])
-                    #             context_writer.writerow(
-                    #                 [*match_data, ' '.join(segment['left']),
-                    #                  ' '.join(segment['right'])])
-                    # else:
+                        match_data = (match['doc'].strip("\n"),
+                                      match['section'].strip("\n"))
                     if type(match) == dict:
                         match = match['match']
                     segments = segment_match(match, query_exp, xml=False)
@@ -530,8 +513,6 @@ def hits_to_txt(queries=queries, remove_non_kw=False):
                             [*match_data,
                              ' '.join(segment['left']),
                              segment['match'].lstrip('\n'),
-                             #context_writer.writerow(
-                             #    [*match_data,
                              ' '.join(segment['right'])])
 
 
