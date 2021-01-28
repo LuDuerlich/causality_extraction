@@ -31,6 +31,62 @@ from langdetect import detect_langs, lang_detect_exception
 # bf in paragraphs not titles
 
 
+def hierarchy_heuristics(sections, debug=False, doc_title=None):
+    section_titles = {}
+    is_empty = False
+    super_sections = []
+    remove = []
+    is_super_section = False
+    if not sections[0].title:
+        sections[0].title = doc_title
+    if debug:
+        print('avg section title length before:',
+              sum([len(s.title) for s in sections]), len(sections))
+    for i in range(len(sections)):
+        if re.match(r'\d+[.\d]* [A-ZÄÅÖ]\w+|Bilaga \d', sections[i].title):
+            super_sections.append(sections[i].title)
+            is_super_section = True
+        if len(sections[i]):
+            # can potentially be merged with previous section
+            if is_empty and (sections[i].title[0].islower() or
+                             sections[i].title[0] in '('):
+                sections[i].title = f"{sections[i-1].title}" +\
+                    f" {sections[i].title}"
+                remove.append(i-1)
+            is_empty = False
+        else:
+            # empty section might have to be merged
+            if is_empty:
+                if super_sections:
+                    sections[i].title = f"{sections[i-1].title}" +\
+                        f" {sections[i].title}"
+                remove.append(i-1)
+            is_empty = True
+        if super_sections and not is_super_section\
+           and not sections[i].title.startswith(f'{super_sections[-1]} /'):
+            sections[i].title = f"{super_sections[-1]} / {sections[i].title}"
+        is_super_section = False
+    for i in sorted(remove, reverse=True):
+        assert len(sections[i]) == 0, f'section not empty {i}, {section[i]}'
+        del sections[i]
+    # check for duplicate titles:
+    for i, section in enumerate(sections):
+        if section.title in section_titles:
+            entry = section_titles[section.title]
+            entry.append(section.title)
+            n = len(section_titles[section.title])
+            section.title += f' ({n})'
+            if n == 2:
+                sections[entry[0][0]].title += ' (1)'
+            if debug:
+                print('duplicate title!')
+        else:
+            section_titles[section.title] = [(i, section.title)]
+    if debug:
+        print('avg section title length after:',
+              sum([len(s.title) for s in sections]), len(sections))
+
+
 def is_lang(lang, el):
     logging.debug(f"detecting language for {el}")
     url_or_email = r"https?://(\w+\./?)+\w+(/[\w.]*)*|[\w.]+@\w+\.\w+"
@@ -169,7 +225,7 @@ class Text(object):
                 doc = ifile.read()
         else:
             doc = path
-        soup = bs4.BeautifulSoup(doc)
+        soup = bs4.BeautifulSoup(doc, 'html.parser')
         if soup.h1:
             self.title = soup.h1.text
         current_el = soup.h1.next_element
@@ -186,6 +242,7 @@ class Text(object):
             current_el = current_el.next_element
         if current_section.title or current_section.text:
             self.content.append(current_section)
+        hierarchy_heuristics(self.content, doc_title=self.title)
 
     @property
     def section_titles(self):
@@ -837,5 +894,28 @@ def run_example(key):
     print_to_files(key, ft, s, es, ss)
     print(ft)
 
-# for key in ["H8B336", "H4B319", "GIB33"]:
-#     run_example(key)
+
+def meta_data():
+    """link document ID e.g. H8B336 to document number e.g. SOU 2020:36"""
+    reply = requests.get('http://rkrattsbaser.gov.se/komm?fritext=')
+    current_p = 'http://rkrattsbaser.gov.se/komm?fritext='
+    # this gets all entries in kommittéregistret (a total of 3,628)
+
+    # to get the search hits
+    search_hits = soup.find_all(class_ = 'search-hit')
+    # the links to individual results look like this
+    for hit in search_hits:
+        links = soup.find_all('a')
+        location = [link for link in links if link['href'].startswith("/komm?fritext=&amp;post_id=")]
+
+    # however, we will need to crawl on multiple result pages
+    for link in soup.find_all('a'):
+        if link['href'].startswith('/komm?fritext=&page=') and link.text == 'Nästa':
+            next_page = link
+            break
+    if current_p == next_page:
+        # break
+    # update current_p and repeat
+        pass
+    # for key in ["H8B336", "H4B319", "GIB33"]:
+    #     run_example(key)
