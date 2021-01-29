@@ -1,10 +1,12 @@
 import pytest
 import re, sys
+import os
 from whoosh import index, query, fields, analysis
 from whoosh.util.testing import TempIndex
 from whoosh.qparser import QueryParser
 from whoosh.highlight import Highlighter
-from keyword_search import MyFormatter, MySentenceFragmenter, BasicTokenizer, MyHighlighter
+from keyword_search import *
+# from keyword_search import MyFormatter, MySentenceFragmenter, BasicTokenizer, MyHighlighter
 
 text = """This is a sentence. Here's another one. How about some abbreviations, \
 e.g. 'etc.' or 'et. al.'? How will this text end? We are about to find out. \
@@ -31,7 +33,7 @@ def search(query_string, analyzer=None):
             for hit in result:
                 res = f"<match doc='{hit['doc_title']}' "
                 res += f"section='{hit['sec_title']}'>"
-                for s in highlighter.highlight_hit(hit,"body", strict_phrase='"' in query_string):
+                for s, _ in highlighter.highlight_hit(hit,"body", strict_phrase='"' in query_string):
                     res += f"<hit>{s}</hit>"
                 res += "</match>"
                 results.append(res)
@@ -86,13 +88,51 @@ def _multiple_terms(analyzer=None):
                       "full_match":
                       "<query term='how about'><match doc='doc1' section='sec1'><hit>This is a sentence. Here's another one. <em><b>How</b> <b>about</b> some abbreviations, e.g. </em>'etc.'</hit><hit>'etc.' or 'et. al.'? <em><b>How</b> will this text end? </em>We are about to find out. Maybe this can be the final sentence</hit><hit>' or 'et. al.'? How will this text end? <em>We are <b>about</b> to find out. </em>Maybe this can be the final sentence</hit></match></query>"}], analyzer)
 
+
 def test_single_term():
     _single_term()
 
+
 def test_multiple_terms():
     _multiple_terms()
+
 
 def test_custom_tokeniser():
     analyzer = BasicTokenizer(do_lower_case=False) | analysis.LowercaseFilter()
     _single_term(analyzer)
     _multiple_terms(analyzer)
+
+
+def test_write_markup():
+    str_ = '<p>5 > 6 & "Hello World!" Hällö</p>'
+    assert write_markup(str_, 'xml') == '<p>5 &gt; 6 &amp; "Hello World!" Hällö</p>'
+    assert write_markup(str_, 'html') == '<p>5 &gt; 6 &amp; &quot;Hello World&excl;&quot; H&auml;ll&ouml;</p>'
+
+
+def test_extract_sample():
+    # since the data structure contains 210 samples,
+    # we focus on keyword coverage instead of checking
+    # the whole sample for equality
+    sample = extract_sample()
+    assert len(sample) == 21
+    assert list(sample.keys()) == ['"bero på"', '"bidra till"',
+                                   '"leda till"', '"på grund av"',
+                                   '"till följd av"', 'följd',
+                                   '"vara ett resultat av"', 'resultat',
+                                   'resultera', 'därför', 'eftersom',
+                                   'förklara', 'förorsaka', 'orsak',
+                                   'orsaka', 'påverka', 'effekt',
+                                   'medföra', 'framkalla', 'vålla',
+                                   'rendera']
+    assert len(sample['"bero på"']) == 10
+
+
+def test_create_index():
+    ix_path = '__test__index'
+    filenames = ['documents/ft_GTB366d4.html']
+    create_index(path=ix_path, filenames=filenames, ixname=None)
+    ix = index.open_dir(ix_path)
+    assert ix.doc_count() == 127,\
+        'Section segmentation not different from previous version!' +\
+        f'should be 127 but the index now counts {ix.doc_count()}!'
+    os.system(f'rm -r {ix_path}')
