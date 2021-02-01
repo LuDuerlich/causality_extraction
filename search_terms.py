@@ -32,10 +32,11 @@ annotated_search_terms = [('"bero på"', 0, "vb"),
                 ("vålla", 0, "vb")]
 
 
-def expand():
-    dictionary = {"vara": ["var", "är", "varit", "vore", "vara"]}
+def expand(term_list=annotated_search_terms, dictionary=None):
+    if dictionary is None:
+        dictionary = {"vara": ["var", "är", "varit", "vore", "vara"]}
     terms = {}
-    for term, i, pos in annotated_search_terms:
+    for term, i, pos in term_list:
         if term not in terms:
             terms[term] = set()
         if pos:
@@ -95,3 +96,40 @@ expanded_dict = {'"bero på"': {'"berodd på"', '"beror på"', '"berodds på"', 
                                'framkallad', 'framkalla', 'framkallar', 'framkallande'},
                  'vålla': {'vållats', 'vållad', 'vållat', 'vållades', 'vållas', 'vållande', 'vållar', 'vållade',
                            'vålla', 'vållads'}}
+# öka tillta, minska avta växa?, ökning tillväxt höjning, minskning nedgång reducering avtagande
+# wonder if there is a preference for POS
+# new_terms = ['minska', 'minskad', 'minskade', 'minskades', 'minskads', 'minskande', 'minskar', 'minskas', 'minskat', 'minskats', 'minskning', 'minskningar', 'minskningarna', 'minskningarnas', 'minskningars', 'minskningen', 'minskningens', 'öka', 'ökad', 'ökade', 'ökades', 'ökads', 'ökande', 'ökar', 'ökas', 'ökat', 'ökats', 'ökning', 'ökningar', 'ökningarna', 'ökningarnas', 'ökningars', 'ökningen', 'ökningens']
+increase_terms = ['öka', 'tillta',  'växa', 'ökning', 'uppgång', 'tilltagande', 'höjning']
+annotated_increase_terms = [('öka', 0, 'vb'),
+                            ('tillta', 0, 'vb'),
+                            ('växa', 0, 'vb'),
+                            ('ökning', 0, 'nn'),
+                            ('uppgång', 0, 'nn'),
+                            ('tilltagande', 0, 'nn'),
+                            ('höjning', 0, 'nn')]
+incr_dict = {'öka': {'ökat', 'ökad', 'ökads', 'ökades', 'ökade', 'öka', 'ökar', 'ökande', 'ökas', 'ökats'},
+             'tillta': {'tilltog', 'tilltaget', 'tilltas', 'tilltogs', 'tilltar', 'tillta', 'tilltagit',
+                        'tilltagen', 'tilltagens', 'tilltagna', 'tilltagits', 'tilltagne'},
+             'växa': {'växas', 'växta', 'vuxet', 'vuxens', 'växande', 'vuxen', 'vuxit', 'vuxne', 'vuxna',
+                      'växa', 'växs', 'växts', 'växtes', 'växer', 'växt', 'väx', 'vuxits', 'växte'},
+             'ökning': {'ökningarnas', 'ökningarna', 'ökningars', 'ökningar', 'ökningen', 'ökningens', 'ökning'},
+             'uppgång': {'uppgången', 'uppgångars', 'uppgång', 'uppgångarnas', 'uppgångarna', 'uppgångens', 'uppgångar'},
+             'tilltagande': {'tilltagande', 'tilltagandet', 'tilltagandes',  'tilltagandets'},
+             'höjning': {'höjningen', 'höjning', 'höjningens', 'höjningar', 'höjningarnas', 'höjningars', 'höjningarna'}}
+
+decrease_terms = ['minska', 'avta','minskning', 'nedgång', 'avtagande', 'sänkning']
+annotated_decrease_terms = [('minska', 0, 'vb'),
+                            ('avta', 0, 'vb'),
+                            ('minskning', 0, 'nn'),
+                            ('nedgång', 0, 'nn'),
+                            ('avtagande', 0, 'nn'),
+                            ('sänkning', 0, 'nn')]
+decr_dict = {'minska': {'minskads', 'minskade', 'minskat', 'minskas', 'minskad', 'minskar', 'minska', 'minskats',
+                        'minskades', 'minskande'},
+             'avta': {'avtagande', 'avtagne', 'avtagits', 'avtagit', 'avtaget', 'avta', 'avtogs', 'avtog', 'avtagens',
+                      'avtagna', 'avtagen', 'avtas', 'avtar'},
+             'minskning': {'minskningarna', 'minskning', 'minskningar', 'minskningen', 'minskningars', 'minskningarnas',
+                           'minskningens'},
+             'nedgång': {'nedgångarnas', 'nedgång', 'nedgångars', 'nedgångar', 'nedgångarna', 'nedgången', 'nedgångens'},
+             'avtagande': {'avtagande', 'avtagandet', 'avtagandes', 'avtagandets'},
+             'sänkning': {'sänkningens', 'sänkningen', 'sänkning', 'sänkningarnas', 'sänkningars', 'sänkningarna', 'sänkningar'}}
