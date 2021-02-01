@@ -2,13 +2,15 @@ from data_extraction import Text
 from bs4 import BeautifulSoup
 import copy
 from html.entities import html5
+import os
+from postprocessing import model, redefine_boundaries
 import tarfile
 import re
 import sys
 # sys.path.append("/Users/luidu652/Documents/causality_extraction/")
-from search_terms import search_terms, expanded_dict
+from search_terms import search_terms, expanded_dict, incr_dict, decr_dict
 # sys.path.append("/Users/luidu652/Documents/causality_extraction/whoosh/src/")
-from whoosh.fields import Schema, TEXT, KEYWORD, ID, STORED, NGRAM
+from whoosh.fields import Schema, TEXT, KEYWORD, ID, STORED, NGRAM, NUMERIC, FieldType
 from whoosh.qparser import QueryParser
 from whoosh.highlight import *
 from whoosh import index, query, analysis
@@ -18,9 +20,12 @@ import pickle
 import unicodedata
 
 analyzer = StandardAnalyzer(stoplist=[])
-schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer),
-                sec_title=TEXT(stored=True, analyzer=analyzer),
-                body=TEXT(stored=True, phrase=True, analyzer=analyzer))
+schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer, lang='se'),
+                sec_title=TEXT(stored=True, analyzer=analyzer, lang='se'),
+                target=TEXT(stored=True, phrase=True, analyzer=analyzer, lang='se'),
+                left_context=TEXT(stored=True, phrase=True, analyzer=analyzer, lang='se'),
+                right_context=TEXT(stored=True, phrase=True, analyzer=analyzer, lang='se'),
+                sent_nb=NUMERIC(stored=True, sortable=True))
 
 htmlchars2ents = {char: entity for entity, char in html5.items()}
 xmlchars2ents = {'"': 'quot;',
@@ -437,7 +442,11 @@ class MyHighlighter(Highlighter):
             tokens.sort(key=lambda t: t.startchar)
             tokens = [max(group, key=lambda t: t.endchar - t.startchar)
                       for key, group in groupby(tokens, lambda t: t.startchar)]
-            fragments = self.fragmenter.fragment_matches(text, tokens)
+            if fieldname == 'target':
+                text = [[hitobj['left_context'], hitobj['target'], hitobj['right_context']]]
+                fragments = self.fragmenter.fragment_tokens(text, tokens, split_fields=True)
+            else:
+                fragments = self.fragmenter.fragment_matches(text, tokens)
         else:
             # Retokenize the text
             analyzer = results.searcher.schema[fieldname].analyzer
@@ -453,7 +462,11 @@ class MyHighlighter(Highlighter):
             else:
                 tokens = set_matched_filter(tokens, words)
             tokens = self._merge_matched_tokens(tokens)
-            fragments = self.fragmenter.fragment_tokens(text, tokens)
+            if fieldname == 'target':
+                text = [hitobj['left_context'], hitobj['target'], hitobj['right_context']]
+                fragments = self.fragmenter.fragment_tokens(text, tokens, split_fields=True)
+            else:
+                fragments = self.fragmenter.fragment_tokens(text, tokens)
         fragments = top_fragments(fragments, top, self.scorer, self.order,
                                   minscore=minscore)
         output = self.formatter.format(fragments)
@@ -510,6 +523,7 @@ class MyFormatter(Formatter):
         output.append(self._text(text[index:match_s_end+1]))
         output.append("</em>")
         output.append(self._text(text[match_s_end+1:fragment.endchar+1]))
+        # print('formatted:', "".join(output), fragment.sent_boundaries[0])
         return "".join(output), fragment.sent_boundaries[0]
 
     def format(self, fragments, replace=False):
@@ -538,7 +552,8 @@ def mksentfrag(text, tokens, startchar=None, endchar=None,
     startchar = max(0, startchar - charsbefore)
     endchar = min(len(text), endchar + charsafter)
     f = ContextFragment(text, tokens, startchar, endchar, match_s_boundaries)
-    # print("FRAGMENT:", startchar, endchar, match_s_boundaries)
+    # print("FRAGMENT:", startchar, endchar, match_s_boundaries, len(text), tokens)
+    # print(text[startchar:endchar])
     return f
 
 
@@ -715,96 +730,120 @@ class MyOldSentenceFragmenter(Fragmenter):
         self.charlimit = charlimit
         self.context_size = context_size
 
-    def fragment_tokens(self, text, tokens):
+    def fragment_tokens(self, text, tokens, split_fields=False):
         maxchars = self.maxchars
         sentencechars = self.sentencechars
         charlimit = self.charlimit
         context = self.context_size
+        if split_fields:
+            # left context
+            left_text = text[0].split("###")
+            left_c = "\n".join(left_text[max(0,len(left_text)-context):])
 
-        textlen = len(text)
-        # startchar of first token in the current sentence
-        first = None
-        # Buffer for matched tokens in the current sentence
-        tks = []
-        sents = []
-        is_right_context = False
-        match_sent_id = []
-        last_tks = []
-        endchar = None
-        # Number of chars in the current sentence
-        currentlen = 0
+            # right context
+            right_text = text[-1].split("###")
+            right_c = "\n".join(right_text[:min(len(right_text),context)])
+            target = text[1]
+            text[0] = '\n'.join(left_text)
+            text[-1] = '\n'.join(right_text)
+            text = ' '.join(text)
+            boundaries = [text.index(target), text.index(target) + len(target)]
+            # fix character positions
+            matched_tokens = []
+            for t in tokens:
+                if t.matched:
+                    matched_tokens.append(t.copy())
+                    matched_tokens[-1].startchar += boundaries[0]
+                    matched_tokens[-1].endchar += boundaries[0]
+            yield mksentfrag(text, matched_tokens,
+                             startchar=text.index(left_c),
+                             endchar=text.index(right_c) + len(right_c),
+                             match_s_boundaries=boundaries)
+        else:
+            textlen = len(text)
+            # startchar of first token in the current sentence
+            first = None
+            # Buffer for matched tokens in the current sentence
+            tks = []
+            sents = []
+            is_right_context = False
+            match_sent_id = []
+            last_tks = []
+            endchar = None
+            # Number of chars in the current sentence
+            currentlen = 0
 
-        for t in tokens:
-            startchar = t.startchar
-            endchar = t.endchar
-            if charlimit and endchar > charlimit:
-                break
+            for t in tokens:
+                startchar = t.startchar
+                endchar = t.endchar
+                if charlimit and endchar > charlimit:
+                    break
 
-            if first is None:
-                # Remember the startchar of the first token in a sentence
-                first = startchar
-                currentlen = 0
+                if first is None:
+                    # Remember the startchar of the first token in a sentence
+                    first = startchar
+                    currentlen = 0
 
-            tlength = endchar - startchar
-            currentlen += tlength
+                tlength = endchar - startchar
+                currentlen += tlength
 
-            if t.matched:
-                tks.append(t.copy())
+                if t.matched:
+                    tks.append(t.copy())
 
-            # If the character after the current token is end-of-sentence
-            # punctuation, finish the sentence and reset
-            if endchar < textlen and text[endchar] in sentencechars:
-                # Don't break for two periods in a row (e.g. ignore "...")
-                if endchar + 1 < textlen and\
-                   text[endchar + 1] in sentencechars:
-                    continue
-                # If the sentence had matches and it's not too long,
-                # save it and process the next sentences until the edge
-                # of the context window is reached
-                if tks and currentlen <= maxchars:
-                    if not sents:
-                        # insert dummy sent before actual sent
-                        sents.append((first, endchar))
-                    match_sent_id.append(len(sents))
-                    is_right_context = True
-                    last_tks.append(tks)
-                if sents and is_right_context and\
-                   match_sent_id[-1] + context == len(sents):
-                    for i in match_sent_id:
-                        current_endchar = sents[min(i+context,
-                                                    len(sents) - 1)][-1]
-                        # account for matches at the beginning of the document
-                        current_startchar = sents[max(i-context, 0)][0]
-                        yield mksentfrag(text, last_tks.pop(0),
-                                         startchar=current_startchar,
-                                         endchar=min(current_endchar, endchar),
-                                         match_s_boundaries=sents[i])
-                    # reset the variables for each match
-                    match_sent_id = []
-                    is_right_context = False
-                # Reset the counts within a sentence
+                # If the character after the current token is end-of-sentence
+                # punctuation, finish the sentence and reset
+                if endchar < textlen and text[endchar] in sentencechars:
+                    # Don't break for two periods in a row (e.g. ignore "...")
+                    if endchar + 1 < textlen and\
+                       text[endchar + 1] in sentencechars:
+                        continue
+                    # If the sentence had matches and it's not too long,
+                    # save it and process the next sentences until the edge
+                    # of the context window is reached
+                    if tks and currentlen <= maxchars:
+                        if not sents:
+                            # insert dummy sent before actual sent
+                            sents.append((first, endchar))
+                        match_sent_id.append(len(sents))
+                        is_right_context = True
+                        last_tks.append(tks)
+                    if sents and is_right_context and\
+                       match_sent_id[-1] + context == len(sents):
+                        for i in match_sent_id:
+                            current_endchar = sents[min(i+context,
+                                                        len(sents) - 1)][-1]
+                            # account for matches at the beginning of the document
+                            current_startchar = sents[max(i-context, 0)][0]
+                            yield mksentfrag(text, last_tks.pop(0),
+                                             startchar=current_startchar,
+                                             endchar=min(current_endchar, endchar),
+                                             match_s_boundaries=sents[i])
+                        # reset the variables for each match
+                        match_sent_id = []
+                        is_right_context = False
+                    # Reset the counts within a sentence
+                    sents.append((first, endchar))
+                    tks = []
+                    first = None
+                    currentlen = 0
+            # If we get to the end of the text and there's still a sentence
+            # in the buffer, yield it
+            if tks:
+                last_tks.append(tks)
+                match_sent_id.append(len(sents))
                 sents.append((first, endchar))
-                tks = []
-                first = None
-                currentlen = 0
-        # If we get to the end of the text and there's still a sentence
-        # in the buffer, yield it
-        if tks:
-            last_tks.append(tks)
-            match_sent_id.append(len(sents))
-            sents.append((first, endchar))
-        if last_tks:
-            for i in match_sent_id:
-                current_endchar = sents[min(i+context, len(sents) - 1)][-1]
-                yield mksentfrag(text, last_tks.pop(0),
-                                 startchar=sents[max(i-context, 0)][0],
-                                 endchar=min(current_endchar, endchar),
-                                 match_s_boundaries=sents[i])
+            if last_tks:
+                for i in match_sent_id:
+                    current_endchar = sents[min(i+context, len(sents) - 1)][-1]
+                    yield mksentfrag(text, last_tks.pop(0),
+                                     startchar=sents[max(i-context, 0)][0],
+                                     endchar=min(current_endchar, endchar),
+                                     match_s_boundaries=sents[i])
 
 
 def create_index(path="test_index/", ixname="test", random_files=False,
-                 schema=schema, add=False, filenames=None):
-    """Create or add to a specified index.
+                 schema=schema, add=False, filenames=None, n=5):
+    """Create or add to a specified index of files in documents.tar.
 
     Parameters:
                path (str):
@@ -822,6 +861,8 @@ def create_index(path="test_index/", ixname="test", random_files=False,
                           whether or not to add the same previously
                           sampled files to the index
                           (useful to compare different index settings)
+               n (int):
+                          how many context sentences to store
     """
 
     if not path.endswith("/"):
@@ -832,10 +873,13 @@ def create_index(path="test_index/", ixname="test", random_files=False,
         ).casefold() != "y":
             ix = index.open_dir(path, indexname=ixname)
         else:
-            print(f"clearing out {path}")
+            print(f"clearing out {path} ...")
             os.system(f"rm -r {path}*")
             ix = index.create_in(path, schema, indexname=ixname)
     else:
+        if not os.path.exists(path):
+            print(f'creating directory {path} ...')
+            os.system(f'mkdir {path}')
         ix = index.create_in(path, schema, indexname=ixname)
     writer = ix.writer()
     if random_files:
@@ -864,22 +908,39 @@ def create_index(path="test_index/", ixname="test", random_files=False,
     with tarfile.open("documents.tar", "r") as ifile:
         n_files = len(files)
         print(f'{n_files} to be indexed')
-        for i, k in enumerate(files):
+        for i, key in enumerate(files):
             text = Text("")
-            if k.endswith("html"):
-                text.from_html(ifile.extractfile(k).read())
-                k = k.split("_")[1].split(".")[0]
+            if key.endswith("html"):
+                text.from_html(ifile.extractfile(key).read())
+                key = key.split("_")[1].split(".")[0]
             else:
                 text.from_html(
                     ifile.extractfile(
-                        f"documents/s_{k}.html"
+                        f"documents/s_{key}.html"
                     ).read())
             for j, section in enumerate(text):
-                writer.add_document(doc_title=k,
-                                    sec_title=re.sub(r'\s+',
-                                                     ' ', section.title),
-                                    body=re.sub(r'\s+', ' ',
-                                                "\n".join(section.text)))
+                document = model(" ".join(section.text))
+                sents = redefine_boundaries(document)
+                for k, sent in enumerate(sents):
+                    left_ctxt = ['']
+                    right_ctxt = ['']
+                    if k > 0:
+                        left_ctxt = sents[max(k-n, 0):k]
+                    if k + 1 < len(sents):
+                        right_ctxt = sents[k+1:min(len(sents),k+1+n)]
+                    target = str(sents[k])
+                    # apparently, whoosh does not preserve newlines, so we have to
+                    # mark sentence boundaries another way
+                    writer.add_document(doc_title=key,
+                                        sec_title=re.sub(r'\s+',
+                                                         ' ', section.title),
+                                        left_context=re.sub(r'\s+', ' ',
+                                                            "###".join(left_ctxt)),
+                                        right_context=re.sub(r'\s+', ' ',
+                                                             "###".join(right_ctxt)),
+                                        target=target,
+                                        sent_nb=k)
+
                 # writer.add_document(doc_title=re.sub(r'\s+',
                 #                                      ' ',
                 #                                      text.title) + f" {k}",
@@ -1094,39 +1155,67 @@ def format_match(match, match_nb, org_num=None, format_='xml'):
 
 
 def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
-                   format_='xml', year='', additional_terms=[]):
+                   format_='xml', year='', additional_terms=[],
+                   field='body', context_size=2):
     """search for matches within one document"""
-    qp = QueryParser('body', schema=schema)
-    sentf = MyOldSentenceFragmenter(maxchars=1000, context_size=2)
+    qp = QueryParser(field, schema=ix.schema)
+    sentf = MyOldSentenceFragmenter(maxchars=1000,
+                                    context_size=context_size)
     formatter = MyFormatter(between="\n...")
-    highlighter = Highlighter(fragmenter=sentf,
+    highlighter = MyHighlighter(fragmenter=sentf,
                               scorer=BasicFragmentScorer(),
                               formatter=formatter)
+    #print('args:', locals())
     text = Text('')
     text.from_html(f'documents/ft_{id_}.html')
+    print(f'documents/ft_{id_}.html')
     matches_by_section = {}
     _query = ' OR '.join(keywords)
     if additional_terms:
         terms = ' OR '.join(additional_terms)
-        print(_query)
-        print(terms)
+        #print(_query)
+        #print(terms)
         _query = f"({terms}) AND ({_query})"
-        print(_query)
+        #print(_query)
     with ix.searcher() as searcher:
+        # print(f'((doc_title:{id_}) AND ({_query}))')
         query = qp.parse(
-            f'((doc_title:{id_}) AND (body:{_query}))')
-        query = qp.parse(_query)
-        print(query)
-        res = searcher.search(query)
-        matches = [(hit, m, start_pos) for m in res
-                   for hit, start_pos in highlighter.highlight_hit(
-                           m, "body", top=len(m.results),
-                           strict_phrase='"' in _query)]
+            # f'((doc_title:{id_}) AND ({field}:{_query}))')
+            f'((doc_title:{id_}) AND ({_query}))')
+        # print(query)
+        #query = qp.parse(_query)
+        #print(query)
+        res = searcher.search(query, terms=True, limit=None)
+        if field == 'body':
+            matches = [(hit, m, start_pos) for m in res
+                       for hit, start_pos in highlighter.highlight_hit(
+                               m, "body", top=len(m.results),
+                               strict_phrase='"' in _query)]
+        elif field == 'target':
+            matches = []
+            for m in res:
+                # print(len(m), len(res), m['sec_title'])
+                hits = highlighter.highlight_hit(
+                        m, "target", top=len(m.results),
+                        strict_phrase='"' in _query)
+                # print(len(hits))
+                for hit, start_pos in hits:
+                    matches.append((hit, m, m['sent_nb']))
+
+
+            # matches = [(hit, m, m['sent_nb']) for m in res
+            #            for hit, start_pos in highlighter.highlight_hit(
+            #                    m, "target", top=len(m.results),
+            #                    strict_phrase='"' in _query)]
+            # print(len(res), len(matches))
         # matched_s.results.order = FIRST
         for i, match in enumerate(matches):
             if match[1]['sec_title'] not in matches_by_section:
                 matches_by_section[match[1]['sec_title']] = {}
-            matches_by_section[match[1]['sec_title']][match[-1]] = format_match(match[:-1], i, format_=format_)
+            # print(i, len(match), match)
+            #print('nb within document:', match[:-1], match[1]['sec_title'])
+            matches_by_section[match[1]['sec_title']][match[-1]] = format_match(
+                match[:-1], i, format_=format_)
 
     if format_ == 'xml':
         parser = 'lxml'
@@ -1170,6 +1259,7 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                     element = output.new_tag('li')
                     element.append(el.p)
                     list_.append(element)
+            #print('Yes:', sec)
         if format_ == 'xml':
             head.append(sec)
     if additional_terms:
@@ -1178,16 +1268,21 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
     else:
         with open(f'document_search/{id_}_{year}_document_search.{format_}', 'w') as ofile:
             ofile.write(output.prettify())
+    print(len(matches_by_section))
+    #return matches_by_section, text.section_titles
     return len(text.section_titles), len(matches)
 
 if __name__ == "__main__":
     # analyzer = BasicTokenizer(do_lower_case=False) |\
     #    analysis.LowercaseFilter()
     analyzer = StandardAnalyzer(stoplist=[])
-    schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer),
-                    sec_title=TEXT(stored=True, analyzer=analyzer),
-                    body=TEXT(stored=True, phrase=True, analyzer=analyzer))
-    ix = index.open_dir("yet_another_ix", indexname="big_index")
+    schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer, lang='se'),
+                    sec_title=TEXT(stored=True, analyzer=analyzer, lang='se'),
+                    target=TEXT(stored=True, phrase=True, analyzer=analyzer, lang='se'),
+                    left_context=TEXT(stored=True, phrase=True, analyzer=analyzer, lang='se'),
+                    right_context=TEXT(stored=True, phrase=True, analyzer=analyzer, lang='se'),
+                    sent_nb=NUMERIC(stored=True, sortable=True))
+    # ix = index.open_dir("yet_another_ix", indexname="big_index")
     # ix = index.open_dir("test_index", indexname="test")
     # ix = index.open_dir("bigger_index", indexname="big_index")
     # ix = index.open_dir("big_bt_index", indexname="bt_index")
@@ -1198,20 +1293,30 @@ if __name__ == "__main__":
     # ixname='big_index', random_files=True)
     paths = ['documents/ft_GIB33.html', 'documents/ft_GKB3145d3.html', 'documents/ft_GLB394.html', 'documents/ft_GOB345d1.html', 'documents/ft_GRB350d3.html', 'documents/ft_GVB386.html', 'documents/ft_GYB362.html', 'documents/ft_H1B314.html', 'documents/ft_H4B391.html', 'documents/ft_H7B312.html']
     new_terms = ['öka', 'tillta', 'minska', 'avta', 'växa', 'ökning', 'tillväxt', 'höjning', 'minskning', 'nedgång', 'reducering', 'avtagande']
-    create_index('document_ix', schema=schema, filenames=paths)
+    create_index('new_schema_document_ix', schema=schema, filenames=paths)
     query_list = [wf for term in expanded_dict.values() for wf in term]
-    ix = index.open_dir('document_ix', indexname='test')
+    decr_terms = [wf for term in {**decr_dict, **incr_dict}.values() for wf in term]
+    ix = index.open_dir('new_schema_document_ix', indexname='test')
     years = ['1995', '1997', '1998', '2001', '2004', '2007', '2010', '2013', '2016', '2019']
     ids = ['GIB33', 'GKB3145d3', 'GLB394', 'GOB345d1', 'GRB350d3', 'GVB386', 'GYB362', 'H1B314', 'H4B391', 'H7B312']
     match_counter = 0
     sec_counter = 0
-    for i, id_ in [(0, ids[0])]:#enumerate(ids):
+    # incr_terms = ['öka', 'ökad', 'ökade', 'ökades', 'ökads', 'ökande', 'ökar', 'ökas', 'ökat', 'ökats', 'ökning', 'ökningar', 'ökningarna', 'ökningarnas', 'ökningars', 'ökningen', 'ökningens']
+    # decr_terms = ['minska', 'minskad', 'minskade', 'minskades', 'minskads', 'minskande', 'minskar', 'minskas', 'minskat', 'minskats', 'minskning', 'minskningar', 'minskningarna', 'minskningarnas', 'minskningars', 'minskningen', 'minskningens']
+    for i, id_ in enumerate(ids):
         print(years[i],id_)
-        secs, matches = query_document(ix, id_, keywords=['"på grund av"'], year = years[i], format_='xml', additional_terms=['öka', 'ökad', 'ökade'])
+        # secs, matches = query_document(ix, id_, keywords=['"på grund av"', '"bidra till"'], year = years[i], format_='xml', additional_terms=['öka', 'ökad', 'ökat', 'ökade', 'ökning'], field='target')
+        #mbs = query_document(ix, id_, keywords=query_list, year = years[i], format_='xml', field='target')
+        # secs, matches = query_document(ix, id_, keywords=query_list, year=years[i], format_='xml', field='target', context_size=2)
+        # secs, matches = query_document(ix, id_, keywords=query_list, year=years[i], format_='html', field='target', context_size=2)
+        secs, matches = query_document(ix, id_, keywords=query_list, year=years[i], format_='html', additional_terms=decr_terms, field='target')
+        secs, matches = query_document(ix, id_, keywords=query_list, year=years[i], format_='xml', additional_terms=decr_terms, field='target')
+        # secs, matches = query_document(ix, id_, keywords=query_list, year=years[i], format_='html', additional_terms=decr_terms+incr_terms, field='target')
+        print(secs, matches)
         sec_counter += secs
         match_counter += matches
     print(sec_counter, match_counter)
-
+ 
 def compare_files(name):
     """helper to compare use of Highlighter and MyHighlighter"""
     with open(f'document_search/{name}') as ifile:
@@ -1230,3 +1335,4 @@ def find_causality_regions(filename):
         if causal_sents:
             print(f'{i}: {section.title.text.strip()} {len(causal_sents)}')
     print(len(soup.find_all('section')))
+
