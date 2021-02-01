@@ -8,7 +8,7 @@ import csv
 import re
 
 with open("samples/hit_samplereconstructed.xml") as ifile:
-    mark_up = BeautifulSoup(ifile.read())
+    mark_up = BeautifulSoup(ifile.read(), features='lxml')
 # markup
 matches = mark_up.find_all('match')
 queries = mark_up.find_all('query')
@@ -441,7 +441,7 @@ def hits_to_txt(queries=queries, remove_non_kw=False):
     matches = None
     if type(queries) == str:
         with open(queries) as ifile:
-            mark_up = BeautifulSoup(ifile.read())
+            mark_up = BeautifulSoup(ifile.read(), features='lxml')
             queries = mark_up.find_all('query')
             hit_dict = {}
             if queries[0].find_all('match')[0].find_all('hit'):
