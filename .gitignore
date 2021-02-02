@@ -2,7 +2,8 @@ documents/*
 *_index
 *_related
 *_experiment*
-*_plots
+hdbscan
+*xsplots
 *_ix
 __pycache__
 annotations
