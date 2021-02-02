@@ -4,7 +4,7 @@ documents/*
 *_experiment*
 hdbscan
 *_doc*
-*xsplots
+*plots
 *_ix
 __pycache__
 annotations
