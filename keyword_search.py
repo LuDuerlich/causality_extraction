@@ -10,7 +10,8 @@ import sys
 # sys.path.append("/Users/luidu652/Documents/causality_extraction/")
 from search_terms import search_terms, expanded_dict, incr_dict, decr_dict
 # sys.path.append("/Users/luidu652/Documents/causality_extraction/whoosh/src/")
-from whoosh.fields import Schema, TEXT, KEYWORD, ID, STORED, NGRAM, NUMERIC, FieldType
+from whoosh.fields import Schema, TEXT, KEYWORD, ID, STORED,\
+    NGRAM, NUMERIC, FieldType
 from whoosh.qparser import QueryParser
 from whoosh.highlight import *
 from whoosh import index, query, analysis
@@ -20,11 +21,16 @@ import pickle
 import unicodedata
 
 analyzer = StandardAnalyzer(stoplist=[])
-schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer, lang='se'),
-                sec_title=TEXT(stored=True, analyzer=analyzer, lang='se'),
-                target=TEXT(stored=True, phrase=True, analyzer=analyzer, lang='se'),
-                left_context=TEXT(stored=True, phrase=True, analyzer=analyzer, lang='se'),
-                right_context=TEXT(stored=True, phrase=True, analyzer=analyzer, lang='se'),
+schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer,
+                               lang='se'),
+                sec_title=TEXT(stored=True, analyzer=analyzer,
+                               lang='se'),
+                target=TEXT(stored=True, phrase=True,
+                            analyzer=analyzer, lang='se'),
+                left_context=TEXT(stored=True, phrase=False,
+                                  analyzer=analyzer, lang='se'),
+                right_context=TEXT(stored=True, phrase=False,
+                                   analyzer=analyzer, lang='se'),
                 sent_nb=NUMERIC(stored=True, sortable=True))
 
 htmlchars2ents = {char: entity for entity, char in html5.items()}
@@ -172,9 +178,10 @@ class BasicTokenizer(analysis.Composable):
                     t.endchar = start_char + end
                     t.pos = pos
                     pos += 1
-                    split_tokens.extend(self._run_split_on_punc(t,
-                                                                never_split,
-                                                                **kwargs))
+                    split_tokens.extend(
+                        self._run_split_on_punc(t,
+                                                never_split,
+                                                **kwargs))
             t = Token(positions, chars, removestops=removestops, mode=mode,
                       **kwargs)
             prevend = token.end()
@@ -191,9 +198,10 @@ class BasicTokenizer(analysis.Composable):
                 t.startchar = prevend
                 t.endchar = len(value)
             if hasattr(t, "text") and t.text:
-                split_tokens.extend(self._run_split_on_punc(t,
-                                                           never_split,
-                                                           **kwargs))
+                split_tokens.extend(
+                    self._run_split_on_punc(t,
+                                            never_split,
+                                            **kwargs))
         for t in split_tokens:
             yield t
 
@@ -443,8 +451,11 @@ class MyHighlighter(Highlighter):
             tokens = [max(group, key=lambda t: t.endchar - t.startchar)
                       for key, group in groupby(tokens, lambda t: t.startchar)]
             if fieldname == 'target':
-                text = [[hitobj['left_context'], hitobj['target'], hitobj['right_context']]]
-                fragments = self.fragmenter.fragment_tokens(text, tokens, split_fields=True)
+                text = [[hitobj['left_context'], hitobj['target'],
+                         hitobj['right_context']]]
+                fragments = self.fragmenter.fragment_tokens(text,
+                                                            tokens,
+                                                            split_fields=True)
             else:
                 fragments = self.fragmenter.fragment_matches(text, tokens)
         else:
@@ -463,8 +474,11 @@ class MyHighlighter(Highlighter):
                 tokens = set_matched_filter(tokens, words)
             tokens = self._merge_matched_tokens(tokens)
             if fieldname == 'target':
-                text = [hitobj['left_context'], hitobj['target'], hitobj['right_context']]
-                fragments = self.fragmenter.fragment_tokens(text, tokens, split_fields=True)
+                text = [hitobj['left_context'], hitobj['target'],
+                        hitobj['right_context']]
+                fragments = self.fragmenter.fragment_tokens(text,
+                                                            tokens,
+                                                            split_fields=True)
             else:
                 fragments = self.fragmenter.fragment_tokens(text, tokens)
         fragments = top_fragments(fragments, top, self.scorer, self.order,
@@ -552,7 +566,8 @@ def mksentfrag(text, tokens, startchar=None, endchar=None,
     startchar = max(0, startchar - charsbefore)
     endchar = min(len(text), endchar + charsafter)
     f = ContextFragment(text, tokens, startchar, endchar, match_s_boundaries)
-    # print("FRAGMENT:", startchar, endchar, match_s_boundaries, len(text), tokens)
+    # print("FRAGMENT:", startchar, endchar,
+    # match_s_boundaries, len(text), tokens)
     # print(text[startchar:endchar])
     return f
 
@@ -738,11 +753,11 @@ class MyOldSentenceFragmenter(Fragmenter):
         if split_fields:
             # left context
             left_text = text[0].split("###")
-            left_c = "\n".join(left_text[max(0,len(left_text)-context):])
+            left_c = "\n".join(left_text[max(0, len(left_text)-context):])
 
             # right context
             right_text = text[-1].split("###")
-            right_c = "\n".join(right_text[:min(len(right_text),context)])
+            right_c = "\n".join(right_text[:min(len(right_text), context)])
             target = text[1]
             text[0] = '\n'.join(left_text)
             text[-1] = '\n'.join(right_text)
@@ -812,11 +827,13 @@ class MyOldSentenceFragmenter(Fragmenter):
                         for i in match_sent_id:
                             current_endchar = sents[min(i+context,
                                                         len(sents) - 1)][-1]
-                            # account for matches at the beginning of the document
+                            # account for matches at the beginning of the
+                            # document
                             current_startchar = sents[max(i-context, 0)][0]
                             yield mksentfrag(text, last_tks.pop(0),
                                              startchar=current_startchar,
-                                             endchar=min(current_endchar, endchar),
+                                             endchar=min(current_endchar,
+                                                         endchar),
                                              match_s_boundaries=sents[i])
                         # reset the variables for each match
                         match_sent_id = []
@@ -927,27 +944,19 @@ def create_index(path="test_index/", ixname="test", random_files=False,
                     if k > 0:
                         left_ctxt = sents[max(k-n, 0):k]
                     if k + 1 < len(sents):
-                        right_ctxt = sents[k+1:min(len(sents),k+1+n)]
+                        right_ctxt = sents[k+1:min(len(sents), k+1+n)]
                     target = str(sents[k])
+                    title = re.sub(r'\s+', ' ', section.title)
+                    right_ctxt = re.sub(r'\s+', ' ', "###".join(right_ctxt))
+                    left_ctxt = re.sub(r'\s+', ' ', "###".join(left_ctxt))
                     # apparently, whoosh does not preserve newlines, so we have to
                     # mark sentence boundaries another way
                     writer.add_document(doc_title=key,
-                                        sec_title=re.sub(r'\s+',
-                                                         ' ', section.title),
-                                        left_context=re.sub(r'\s+', ' ',
-                                                            "###".join(left_ctxt)),
-                                        right_context=re.sub(r'\s+', ' ',
-                                                             "###".join(right_ctxt)),
+                                        sec_title=title,
+                                        left_context=left_ctxt,
+                                        right_context=right_ctxt,
                                         target=target,
                                         sent_nb=k)
-
-                # writer.add_document(doc_title=re.sub(r'\s+',
-                #                                      ' ',
-                #                                      text.title) + f" {k}",
-                #                     sec_title=re.sub(r'\s+',
-                #                                      ' ', section.title),
-                #                     body=re.sub(r'\s+', ' ',
-                #                                 "\n".join(section.text)))
             if i % 50 == 0:
                 print(f'at file {i} ({text.title, k}), it has {j+1} sections')
     writer.commit()
@@ -959,7 +968,7 @@ def escape_xml_refs(text):
                          re.sub("&", "&amp;", text)))
 
 
-def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""]):
+def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
     """Print all examples matching the  query term to an XML file.
 
     Parameters:
@@ -970,15 +979,29 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""]):
        terms (list):
                         additional terms to search for; e.g. 'klimatförendring'
                         (required: no)
+       field (str):
+                        the field to search if none is specified, 'target' or
+                        'body' are searched depending on the schema
     """
 
-    qp = QueryParser("body", schema=ix.schema)
+    print('field:', field)
+    if field is None:
+        if 'target' in ix.schema._fields:
+            field = 'target'
+        elif 'body' in ix.schema._fields:
+            field = 'body'
+        else:
+            raise Exception(f'Unknown schema without field specifier!' +
+                            'If the index schema does not have a target' +
+                            'or body field, specify another field to search!')
+    print('field:', field)
+    qp = QueryParser(field, schema=ix.schema)
     # sentf = MySentenceFragmenter(maxchars=1000)
     sentf = MyOldSentenceFragmenter(maxchars=100000, context_size=4)
     formatter = MyFormatter(between="\n...")
     highlighter = MyHighlighter(fragmenter=sentf,
-                              scorer=BasicFragmentScorer(),
-                              formatter=formatter)
+                                scorer=BasicFragmentScorer(),
+                                formatter=formatter)
 
     # highlighter = MyHighlighter(fragmenter=sentf,
     #                             analyzer=analyzer,
@@ -986,7 +1009,7 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""]):
     #                             formatter=formatter)
     punct = re.compile(r"[!.?]")
     filename = "example_queries_inflected.xml"
-    print("Index:", ix)
+    print("Index:", ix, field)
     if terms[0]:
         filename = f"{terms[0]}_example_queries_inflected.xml"
     with ix.searcher() as s,\
@@ -1000,12 +1023,23 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""]):
             print(f"<query term='{_query}'>", file=output)
             parsed_query = qp.parse(_query)
             r = s.search(parsed_query, terms=True, limit=None)
-            matches = [(hit, m, start_pos) for m in r
-                       for hit in highlighter.highlight_hit(
-                               m, "body", top=len(m.results),
-                               strict_phrase='"' in _query)]
+            if field == 'target':
+                matches = []
+                print('results:', len(r))
+                for m in r:
+                    hits = highlighter.highlight_hit(
+                        m, field, top=len(m.results),
+                        strict_phrase='"' in _query)
+                    for hit, start_pos in hits:
+                        matches.append((hit, m, m['sent_nb']))
+            else:
+                matches = [(hit, m, start_pos) for m in r
+                           for hit in highlighter.highlight_hit(
+                                   m, field, top=len(m.results),
+                                   strict_phrase='"' in _query)]
+
             for i, matched_s in enumerate(matches):
-                print(format_match(matched_s[:-1], i), file=ofile)
+                print(format_match(matched_s[:-1], i), file=output)
                 # matched_s.results.order = FIRST
             print("</query>", file=output)
         print("</xml>", file=output)
@@ -1074,7 +1108,7 @@ def print_sample_file(keywords=expanded_dict, same_matches=None):
             for i, nb in match_ids:
                 i = int(i)
                 if i < len(matches):
-                    print(format_match(matches[i][:-1], nb, i))
+                    print(format_match(matches[i][:-1], nb, i), file=output)
             print("</query>", file=output)
         print("</xml>", file=output)
     print(f"{total_matches} total matches")
@@ -1153,19 +1187,52 @@ def format_match(match, match_nb, org_num=None, format_='xml'):
     return xml_match
 
 
-
 def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                    format_='xml', year='', additional_terms=[],
-                   field='body', context_size=2):
-    """search for matches within one document"""
-    qp = QueryParser(field, schema=ix.schema)
+                   field=None, context_size=2):
+    """search for matches within one document
+    Parameters:
+               ix (FileIndex):
+                  the index to search
+               id_ (str):
+                  the id of the document to search in the index
+               keywords (list):
+                  the (causality) query terms to match
+               format (str):
+                  the output format (either xml or html)
+               year (str):
+                  eventually the year to limit the search to
+                  (for now just filename)
+               additional_terms (list):
+                  other terms to search in combination with the
+                  keywords
+               field (str):
+                  the field to search; if the index schema has
+                  a 'target' or 'body' field and no field is
+                  prespecified, that fieldname is set.
+               context_size (int):
+                  the number of context sentences to the left and
+                  right. Note that if the schema has designated fields
+                  for left and right context, the context size
+                  specified upon index creation is the upper limit.
+
+    """
     sentf = MyOldSentenceFragmenter(maxchars=1000,
                                     context_size=context_size)
     formatter = MyFormatter(between="\n...")
     highlighter = MyHighlighter(fragmenter=sentf,
-                              scorer=BasicFragmentScorer(),
-                              formatter=formatter)
-    #print('args:', locals())
+                                scorer=BasicFragmentScorer(),
+                                formatter=formatter)
+    if field is None:
+        if 'target' in ix.schema._fields:
+            field = 'target'
+        elif 'body' in ix.schema._fields:
+            field = 'body'
+        else:
+            raise Exception(f'Unknown schema without field specifier!' +
+                            'If the index schema does not have a target or' +
+                            'body field, specify another field to search!')
+    qp = QueryParser(field, schema=ix.schema)
     text = Text('')
     text.from_html(f'documents/ft_{id_}.html')
     print(f'documents/ft_{id_}.html')
@@ -1173,25 +1240,12 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
     _query = ' OR '.join(keywords)
     if additional_terms:
         terms = ' OR '.join(additional_terms)
-        #print(_query)
-        #print(terms)
         _query = f"({terms}) AND ({_query})"
-        #print(_query)
     with ix.searcher() as searcher:
-        # print(f'((doc_title:{id_}) AND ({_query}))')
         query = qp.parse(
-            # f'((doc_title:{id_}) AND ({field}:{_query}))')
             f'((doc_title:{id_}) AND ({_query}))')
-        # print(query)
-        #query = qp.parse(_query)
-        #print(query)
         res = searcher.search(query, terms=True, limit=None)
-        if field == 'body':
-            matches = [(hit, m, start_pos) for m in res
-                       for hit, start_pos in highlighter.highlight_hit(
-                               m, "body", top=len(m.results),
-                               strict_phrase='"' in _query)]
-        elif field == 'target':
+        if field == 'target':
             matches = []
             for m in res:
                 # print(len(m), len(res), m['sec_title'])
@@ -1201,21 +1255,17 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                 # print(len(hits))
                 for hit, start_pos in hits:
                     matches.append((hit, m, m['sent_nb']))
+        else:
+            matches = [(hit, m, start_pos) for m in res
+                       for hit, start_pos in highlighter.highlight_hit(
+                               m, field, top=len(m.results),
+                               strict_phrase='"' in _query)]
 
-
-            # matches = [(hit, m, m['sent_nb']) for m in res
-            #            for hit, start_pos in highlighter.highlight_hit(
-            #                    m, "target", top=len(m.results),
-            #                    strict_phrase='"' in _query)]
-            # print(len(res), len(matches))
-        # matched_s.results.order = FIRST
         for i, match in enumerate(matches):
             if match[1]['sec_title'] not in matches_by_section:
                 matches_by_section[match[1]['sec_title']] = {}
-            # print(i, len(match), match)
-            #print('nb within document:', match[:-1], match[1]['sec_title'])
-            matches_by_section[match[1]['sec_title']][match[-1]] = format_match(
-                match[:-1], i, format_=format_)
+            matches_by_section[match[1]['sec_title']][match[-1]] = \
+                format_match(match[:-1], i, format_=format_)
 
     if format_ == 'xml':
         parser = 'lxml'
@@ -1235,6 +1285,11 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
         }
         """)
         head.append(style)
+    elif format_ == 'xml':
+        query_el = output.new_tag('query')
+        query_el['term'] = query
+        head.append(query_el)
+        head = query_el
     for section in text.section_titles:
         sec = output.new_tag('section')
         section = re.sub(r'\s+', ' ', section)
@@ -1243,7 +1298,7 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
             heading.append(section)
             sec.append(heading)
             head.append(sec)
-            list_  = output.new_tag('ol')
+            list_ = output.new_tag('ol')
             head.append(list_)
         else:
             heading = output.new_tag('title')
@@ -1251,7 +1306,8 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
             sec.append(heading)
         if section in matches_by_section:
             for key in sorted(matches_by_section[section]):
-                el = BeautifulSoup(matches_by_section[section][key], parser=parser)
+                el = BeautifulSoup(matches_by_section[section][key],
+                                   parser=parser)
                 if format_ == 'xml':
                     sec.append(el.match)
                 else:
@@ -1259,28 +1315,36 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                     element = output.new_tag('li')
                     element.append(el.p)
                     list_.append(element)
-            #print('Yes:', sec)
         if format_ == 'xml':
             head.append(sec)
     if additional_terms:
-        with open(f'document_search/{id_}_{year}_incr_decr_document_search.{format_}', 'w') as ofile:
+        with open('document_search/' +
+                  f'{id_}_{year}_incr_decr_document_search.{format_}',
+                  'w') as ofile:
             ofile.write(output.prettify())
     else:
-        with open(f'document_search/{id_}_{year}_document_search.{format_}', 'w') as ofile:
+        with open('document_search/' +
+                  f'{id_}_{year}_document_search.{format_}',
+                  'w') as ofile:
             ofile.write(output.prettify())
     print(len(matches_by_section))
-    #return matches_by_section, text.section_titles
     return len(text.section_titles), len(matches)
+
 
 if __name__ == "__main__":
     # analyzer = BasicTokenizer(do_lower_case=False) |\
     #    analysis.LowercaseFilter()
     analyzer = StandardAnalyzer(stoplist=[])
-    schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer, lang='se'),
-                    sec_title=TEXT(stored=True, analyzer=analyzer, lang='se'),
-                    target=TEXT(stored=True, phrase=True, analyzer=analyzer, lang='se'),
-                    left_context=TEXT(stored=True, phrase=True, analyzer=analyzer, lang='se'),
-                    right_context=TEXT(stored=True, phrase=True, analyzer=analyzer, lang='se'),
+    schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer,
+                                   lang='se'),
+                    sec_title=TEXT(stored=True, analyzer=analyzer,
+                                   lang='se'),
+                    target=TEXT(stored=True, phrase=True,
+                                analyzer=analyzer, lang='se'),
+                    left_context=TEXT(stored=True, phrase=False,
+                                      analyzer=analyzer, lang='se'),
+                    right_context=TEXT(stored=True, phrase=False,
+                                       analyzer=analyzer, lang='se'),
                     sent_nb=NUMERIC(stored=True, sortable=True))
     # ix = index.open_dir("yet_another_ix", indexname="big_index")
     # ix = index.open_dir("test_index", indexname="test")
@@ -1291,32 +1355,39 @@ if __name__ == "__main__":
     # To create new index
     # create_index('bigger_index', schema=schema,
     # ixname='big_index', random_files=True)
-    paths = ['documents/ft_GIB33.html', 'documents/ft_GKB3145d3.html', 'documents/ft_GLB394.html', 'documents/ft_GOB345d1.html', 'documents/ft_GRB350d3.html', 'documents/ft_GVB386.html', 'documents/ft_GYB362.html', 'documents/ft_H1B314.html', 'documents/ft_H4B391.html', 'documents/ft_H7B312.html']
-    new_terms = ['öka', 'tillta', 'minska', 'avta', 'växa', 'ökning', 'tillväxt', 'höjning', 'minskning', 'nedgång', 'reducering', 'avtagande']
+    paths = ['documents/ft_GIB33.html', 'documents/ft_GKB3145d3.html',
+             'documents/ft_GLB394.html', 'documents/ft_GOB345d1.html',
+             'documents/ft_GRB350d3.html', 'documents/ft_GVB386.html',
+             'documents/ft_GYB362.html', 'documents/ft_H1B314.html',
+             'documents/ft_H4B391.html', 'documents/ft_H7B312.html']
     create_index('new_schema_document_ix', schema=schema, filenames=paths)
     query_list = [wf for term in expanded_dict.values() for wf in term]
-    decr_terms = [wf for term in {**decr_dict, **incr_dict}.values() for wf in term]
+    decr_terms = [wf for term in {**decr_dict, **incr_dict}.values()
+                  for wf in term]
     ix = index.open_dir('new_schema_document_ix', indexname='test')
-    years = ['1995', '1997', '1998', '2001', '2004', '2007', '2010', '2013', '2016', '2019']
-    ids = ['GIB33', 'GKB3145d3', 'GLB394', 'GOB345d1', 'GRB350d3', 'GVB386', 'GYB362', 'H1B314', 'H4B391', 'H7B312']
+    years = ['1995', '1997', '1998', '2001', '2004', '2007', '2010',
+             '2013', '2016', '2019']
+    ids = ['GIB33', 'GKB3145d3', 'GLB394', 'GOB345d1', 'GRB350d3',
+           'GVB386', 'GYB362', 'H1B314', 'H4B391', 'H7B312']
     match_counter = 0
     sec_counter = 0
-    # incr_terms = ['öka', 'ökad', 'ökade', 'ökades', 'ökads', 'ökande', 'ökar', 'ökas', 'ökat', 'ökats', 'ökning', 'ökningar', 'ökningarna', 'ökningarnas', 'ökningars', 'ökningen', 'ökningens']
-    # decr_terms = ['minska', 'minskad', 'minskade', 'minskades', 'minskads', 'minskande', 'minskar', 'minskas', 'minskat', 'minskats', 'minskning', 'minskningar', 'minskningarna', 'minskningarnas', 'minskningars', 'minskningen', 'minskningens']
+    format_ = 'xml'
     for i, id_ in enumerate(ids):
-        print(years[i],id_)
-        # secs, matches = query_document(ix, id_, keywords=['"på grund av"', '"bidra till"'], year = years[i], format_='xml', additional_terms=['öka', 'ökad', 'ökat', 'ökade', 'ökning'], field='target')
-        #mbs = query_document(ix, id_, keywords=query_list, year = years[i], format_='xml', field='target')
-        # secs, matches = query_document(ix, id_, keywords=query_list, year=years[i], format_='xml', field='target', context_size=2)
-        # secs, matches = query_document(ix, id_, keywords=query_list, year=years[i], format_='html', field='target', context_size=2)
-        secs, matches = query_document(ix, id_, keywords=query_list, year=years[i], format_='html', additional_terms=decr_terms, field='target')
-        secs, matches = query_document(ix, id_, keywords=query_list, year=years[i], format_='xml', additional_terms=decr_terms, field='target')
-        # secs, matches = query_document(ix, id_, keywords=query_list, year=years[i], format_='html', additional_terms=decr_terms+incr_terms, field='target')
+        print(years[i], id_)
+        secs, matches = query_document(ix, id_, keywords=query_list,
+                                       year=years[i], format_=format_,
+                                       field='target', context_size=2)
+
+        secs, matches = query_document(ix, id_, keywords=query_list,
+                                       year=years[i], format_=format_,
+                                       additional_terms=decr_terms,
+                                       field='target')
         print(secs, matches)
         sec_counter += secs
         match_counter += matches
     print(sec_counter, match_counter)
- 
+
+
 def compare_files(name):
     """helper to compare use of Highlighter and MyHighlighter"""
     with open(f'document_search/{name}') as ifile:
@@ -1335,4 +1406,3 @@ def find_causality_regions(filename):
         if causal_sents:
             print(f'{i}: {section.title.text.strip()} {len(causal_sents)}')
     print(len(soup.find_all('section')))
-
