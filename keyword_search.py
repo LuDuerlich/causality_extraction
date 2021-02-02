@@ -880,6 +880,8 @@ def create_index(path="test_index/", ixname="test", random_files=False,
                           (useful to compare different index settings)
                n (int):
                           how many context sentences to store
+                          (if None, stores all the context available
+                          within the section)
     """
 
     if not path.endswith("/"):
@@ -942,9 +944,15 @@ def create_index(path="test_index/", ixname="test", random_files=False,
                     left_ctxt = ['']
                     right_ctxt = ['']
                     if k > 0:
-                        left_ctxt = sents[max(k-n, 0):k]
+                        if n is None:
+                            left_ctxt = sents[:k]
+                        else:
+                            left_ctxt = sents[max(k-n, 0):k]
                     if k + 1 < len(sents):
-                        right_ctxt = sents[k+1:min(len(sents), k+1+n)]
+                        if n is None:
+                            right_ctxt = sents[k+1:]
+                        else:
+                            right_ctxt = sents[k+1:min(len(sents), k+1+n)]
                     target = str(sents[k])
                     title = re.sub(r'\s+', ' ', section.title)
                     right_ctxt = re.sub(r'\s+', ' ', "###".join(right_ctxt))
