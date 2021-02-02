@@ -1,8 +1,12 @@
 documents/*
 *_index
 *_related
+*_experiment*
+*_plots
+*_ix
 __pycache__
 annotations
+document_*
 fixed_hyphenation
 samples
 spacy_model
