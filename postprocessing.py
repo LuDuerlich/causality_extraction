@@ -154,7 +154,7 @@ def segment_match(match, query, highlight_query=False, context=2,
     if match.em:
         match_sequence = match.em.text
     else:
-        print("no match?", match)
+        print("no match?", match, query)
     sents = []
     match_id = []
     match_by_term = []
@@ -202,7 +202,7 @@ def separate_query_terms(query_terms, query_exp):
     terms = []
     new_term = True
     for i, term in enumerate(query_terms):
-        t = term.text
+        t = term.text.strip()
         context = ""
         # add previous token to the match string
         previous = model(str(term.previous_sibling))
@@ -427,35 +427,31 @@ def restructure_hit_sample():
         print("</xml>", file=ofile)
 
 
-def hits_to_txt(queries=queries, remove_non_kw=False):
+def hits_to_txt(queries=queries, remove_non_kw=False, input_files=None):
     """print all matched sentences to text format and save
     context in separate file
     Parameters:
-               queries (str or list):
+               queries (list):
                       the match objects (organised by query) to print
                remove_non_kw (bool):
                       whether or not the query terms should be matched
                       against the expanded dict again
+               input_files (list):
+                      list of filenames to process.
     """
-    parenthesis_format = True
-    matches = None
-    if type(queries) == str:
-        with open(queries) as ifile:
-            mark_up = BeautifulSoup(ifile.read(), features='lxml')
-            queries = mark_up.find_all('query')
-            hit_dict = {}
-            if queries[0].find_all('match')[0].find_all('hit'):
-                for query in queries:
-                    for matches in query.find_all('match'):
-                        for m in matches:
-                            key = (m['doc'], m['section'])
-                            if key not in hit_dict:
-                                hit_dict[key] = {}
-                            for hit in m.find_all('hit'):
-                                hit_dict[key].add(hit)
-            matches = set([{'doc': k[0], 'section': k[1], 'match': h}
-                           for k, v in hit_dict.items() for h in v])
-    terms = [q['term'] for q in queries]
+    matches = set()
+    if input_files:
+        queries = set()
+        for file in input_files:
+            print(file)
+            with open(file) as ifile:
+                mark_up = BeautifulSoup(
+                    re.sub(r'\s+', ' ',
+                           re.sub(r'\n', ' ', ifile.read())),
+                    features='lxml')
+                queries = queries.union(set(mark_up.find_all('query')))
+
+    terms = [re.sub('target:|body:', '', q['term']) for q in queries]
     query_exp = " | ".join(
         [t.replace('"', '').replace(')', '')
          .replace('~2', '').replace('OR', '|')
@@ -465,10 +461,8 @@ def hits_to_txt(queries=queries, remove_non_kw=False):
     if remove_non_kw:
         hits = f'filtered_{hits}'
         context = f'filtered_{context}'
-    with open(hits, "w") as hit_file,\
-         open(context, "w") as context:
+    with open(hits, "w") as hit_file:
         hit_writer = csv.writer(hit_file, delimiter=";")
-        context_writer = csv.writer(context, delimiter=";")
         if remove_non_kw:
             for query in queries:
                 q_term = query["term"].split("(")[0].strip('"')
@@ -485,18 +479,23 @@ def hits_to_txt(queries=queries, remove_non_kw=False):
                                                  xml=False)
                         for segment in segments:
                             hit_writer.writerow(
-                            [*match_data,
-                             ' '.join(segment['left']),
-                             segment['match'].lstrip('\n'),
-                             ' '.join(segment['right'])])
+                                [*match_data,
+                                 ' '.join(segment['left']),
+                                 segment['match'].lstrip('\n'),
+                                 ' '.join(segment['right'])])
 
         else:
             for query in queries:
-                if '(' in query['term']:
+                if '(' in query['term'] and 'doc_title' not in query['term']:
+                    parenthesis_format = True
                     q_term = query["term"].split("(")[0].strip('"')
                 else:
                     parenthesis_format = False
                 matches = query.find_all("match")
+                if not matches:
+                    matches = set()
+                    for sec in query.find_all('section'):
+                        matches = matches.union(sec.find_all('match'))
                 for i, match in enumerate(matches):
                     if parenthesis_format:
                         match_data = (q_term + f'_{match["match_nb"]}',
