@@ -3,6 +3,7 @@ documents/*
 *_related
 *_experiment*
 hdbscan
+*_doc*
 *xsplots
 *_ix
 __pycache__
