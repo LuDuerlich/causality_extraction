@@ -1025,9 +1025,9 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
         print("<xml>", file=output)
         for term in terms:
             if term:
-                _query = f"{term} AND ({' OR '.join(keywords)})"
+                _query = f"{term} AND ({'~2 OR '.join(keywords)})"
             else:
-                _query = ' OR '.join(keywords)
+                _query = '~2 OR '.join(keywords)
             print(f"<query term='{_query}'>", file=output)
             parsed_query = qp.parse(_query)
             r = s.search(parsed_query, terms=True, limit=None)
@@ -1213,7 +1213,8 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                   (for now just filename)
                additional_terms (list):
                   other terms to search in combination with the
-                  keywords
+                  keywords. To allow for multiple filters, this
+                  is supposed to be a list of lists of words
                field (str):
                   the field to search; if the index schema has
                   a 'target' or 'body' field and no field is
@@ -1247,8 +1248,10 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
     matches_by_section = {}
     _query = ' OR '.join(keywords)
     if additional_terms:
-        terms = ' OR '.join(additional_terms)
-        _query = f"({terms}) AND ({_query})"
+        for term_list in additional_terms:
+            print(term_list)
+            terms = ' OR '.join(term_list)
+            _query = f"({terms}) AND ({_query})"
     with ix.searcher() as searcher:
         query = qp.parse(
             f'((doc_title:{id_}) AND ({_query}))')
@@ -1326,10 +1329,17 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
         if format_ == 'xml':
             head.append(sec)
     if additional_terms:
-        with open('document_search/' +
-                  f'{id_}_{year}_incr_decr_document_search.{format_}',
-                  'w') as ofile:
-            ofile.write(output.prettify())
+        if len(additional_terms) > 1:
+            with open('document_search/' +
+                      f'{id_}_{year}_incr_decr_custom' +
+                      f' document_search.{format_}',
+                      'w') as ofile:
+                ofile.write(output.prettify())
+        else:
+            with open('document_search/' +
+                      f'{id_}_{year}_incr_decr_document_search.{format_}',
+                      'w') as ofile:
+                ofile.write(output.prettify())
     else:
         with open('document_search/' +
                   f'{id_}_{year}_document_search.{format_}',
@@ -1388,8 +1398,13 @@ if __name__ == "__main__":
 
         secs, matches = query_document(ix, id_, keywords=query_list,
                                        year=years[i], format_=format_,
-                                       additional_terms=decr_terms,
+                                       additional_terms=[decr_terms],
                                        field='target')
+        secs, matches = query_document(ix, id_, keywords=query_list,
+                                       year=years[i], format_=format_,
+                                       additional_terms=[decr_terms, topics[1]],
+                                       field='target')
+        
         print(secs, matches)
         sec_counter += secs
         match_counter += matches
