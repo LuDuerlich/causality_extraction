@@ -533,3 +533,88 @@ def compare_boundaries():
             print()
         if input("continue? (Y/n)\n> ").casefold() == "n":
             break
+
+
+def target_search(match, topics):
+    for topic in topics:
+        if re.search('|'.join(topic), match.b.text):
+            if 'class' not in match.attrs:
+                match['class'] = []
+            match['class'].append(topic[0])
+
+
+def context_search(match, topics):
+    for topic in topics:
+        if re.search('|'.join(topic), match.text):
+            if 'class' not in match.attrs:
+                match['class'] = []
+            match['class'].append(topic[0])
+            print(match['class'])
+
+
+def format_pilot_study(files, topics, search_context=True):
+    """apply topic filter to search results and output
+       the initial hits with the ones matching the filters
+       highlighted in colour.
+
+    Parameters:
+              files (list):
+                    list of filenames with results to merge
+                    into a single file. (This was used for
+                    document-wise search.
+              topics (list):
+                    a list of topics, each topic represented
+                    by a list of one or more keywords.
+              search_context (bool):
+                    wether or not to filter based on the target
+                    sentence only, or the full context window
+    """
+    matches = BeautifulSoup('<html></html>', parser='html.parser')
+    style = matches.new_tag('style')
+    colors = ['lightblue', 'lightgreen', 'coral', 'gold', 'plum']
+    style.append("""body {
+    margin-top: 4%;
+    margin-bottom: 8%;
+    margin-right: 13%;
+    margin-left: 13%;
+    }""")
+
+    for i, topic in enumerate(topics):
+        style.append(f'.{topic[0]}' +' { background-color:' + colors[i] + ';}')
+    matches.append(style)
+    if search_context:
+        search_funct = context_search
+        prefix = 'context_'
+    else:
+        search_funct = target_search
+        prefix = 'target_only_'
+    last_section = None
+    for file in files:
+        with open(file) as ifile:
+            soup = BeautifulSoup(ifile.read(), parser='html.parser')
+            for match in soup.find_all('p'):
+                search_funct(match, topics)
+                if 'class' in match.attrs:
+                    tag = soup.new_tag('div')
+                    tag.append(f"Topic: {' '.join(match['class'])}")
+                    match.append(tag)
+
+                header_text = f"Document {match['doc']}, " +\
+                f"Section {match['section']}"
+                if last_section and header_text == last_section.h3.text:
+                    last_section.append(match)
+                else:
+                    sec = soup.new_tag('section')
+                    header = soup.new_tag('h3')
+                    header.append(header_text)
+                    sec.append(header)
+                    sec.append(match)
+                    matches.append(sec)
+                    last_section = sec
+
+    with open(f'{prefix}combined_topics.html', 'w') as ofile:
+        ofile.write(str(matches))
+
+# files = glob.glob('incr_decr_docs/*.html')
+# topics = [['arbetslöshet'], ['tillväxt'],
+# ['klimat'], ['missbruk'], ['hälsa']]
