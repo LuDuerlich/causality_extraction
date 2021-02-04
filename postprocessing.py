@@ -6,6 +6,11 @@ import pytest
 import copy
 import csv
 import re
+import regex
+import unicodedata
+
+def remove_accent_chars(x: str):
+    return regex.sub(r'\p{Mn}', '', unicodedata.normalize('NFKD', x))
 
 with open("samples/hit_samplereconstructed.xml") as ifile:
     mark_up = BeautifulSoup(ifile.read(), features='lxml')
@@ -569,7 +574,7 @@ def format_pilot_study(files, topics, search_context=True):
                     wether or not to filter based on the target
                     sentence only, or the full context window
     """
-    matches = BeautifulSoup('<html></html>', parser='html.parser')
+    matches = BeautifulSoup('<html><head></head><body></body></html>', parser='html.parser')
     style = matches.new_tag('style')
     colors = ['lightblue', 'lightgreen', 'coral', 'gold', 'plum']
     style.append("""body {
@@ -580,8 +585,9 @@ def format_pilot_study(files, topics, search_context=True):
     }""")
 
     for i, topic in enumerate(topics):
-        style.append(f'.{topic[0]}' +' { background-color:' + colors[i] + ';}')
-    matches.append(style)
+        style.append(f'.{remove_accent_chars(topic[0])}' +' { background-color:' + colors[i] + ';}')
+    matches.head.append(style)
+    matches = matches.body
     if search_context:
         search_funct = context_search
         prefix = 'context_'
@@ -597,6 +603,7 @@ def format_pilot_study(files, topics, search_context=True):
                 if 'class' in match.attrs:
                     tag = soup.new_tag('div')
                     tag.append(f"Topic: {' '.join(match['class'])}")
+                    match['class'] = [remove_accent_chars(c) for c in match['class']]
                     match.append(tag)
 
                 header_text = f"Document {match['doc']}, " +\
@@ -611,9 +618,10 @@ def format_pilot_study(files, topics, search_context=True):
                     sec.append(match)
                     matches.append(sec)
                     last_section = sec
-
+    
     with open(f'{prefix}combined_topics.html', 'w') as ofile:
-        ofile.write(str(matches))
+        matches = matches.parent
+        ofile.write(matches.prettify(formatter='html5'))
 
 # files = glob.glob('incr_decr_docs/*.html')
 # topics = [['arbetslöshet'], ['tillväxt'],

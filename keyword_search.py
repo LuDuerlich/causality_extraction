@@ -1,5 +1,6 @@
 from data_extraction import Text
 from bs4 import BeautifulSoup
+import bs4.element
 import copy
 from html.entities import html5
 import os
@@ -10,9 +11,11 @@ import sys
 # sys.path.append("/Users/luidu652/Documents/causality_extraction/")
 from search_terms import search_terms, expanded_dict, incr_dict, decr_dict
 # sys.path.append("/Users/luidu652/Documents/causality_extraction/whoosh/src/")
+from whoosh.analysis import SpaceSeparatedTokenizer
 from whoosh.fields import Schema, TEXT, KEYWORD, ID, STORED,\
-    NGRAM, NUMERIC, FieldType
-from whoosh.qparser import QueryParser
+    NUMERIC, FieldType
+from whoosh.qparser import QueryParser, RegexPlugin
+from whoosh.query import Regex, Or, And, Term
 from whoosh.highlight import *
 from whoosh import index, query, analysis
 import random
@@ -48,12 +51,11 @@ def fix_file(filename):
         markup = 'xml'
     with open(filename) as ifile:
         soup = BeautifulSoup(ifile.read(), parser=markup)
-    text = write_markup(str(soup), markup)
-    out = filename.split('/')
-    out = f"{'/'.join(out[:-1])}/new_{out[-1]}"
-    print(out)
     with open(out, 'w') as ofile:
-        ofile.write(text)
+        if markup == 'html':
+            ofile.write(text.prettify(formatter='html5'))
+        else:
+            ofile.write(text)
 
 
 def write_markup(string, format='xml'):
@@ -859,7 +861,7 @@ class MyOldSentenceFragmenter(Fragmenter):
 
 
 def create_index(path="test_index/", ixname="test", random_files=False,
-                 schema=schema, add=False, filenames=None, n=5):
+                 schema=schema, add=False, filenames=None, n=5, ngrams=False):
     """Create or add to a specified index of files in documents.tar.
 
     Parameters:
@@ -959,12 +961,22 @@ def create_index(path="test_index/", ixname="test", random_files=False,
                     left_ctxt = re.sub(r'\s+', ' ', "###".join(left_ctxt))
                     # apparently, whoosh does not preserve newlines, so we have to
                     # mark sentence boundaries another way
-                    writer.add_document(doc_title=key,
-                                        sec_title=title,
-                                        left_context=left_ctxt,
-                                        right_context=right_ctxt,
-                                        target=target,
-                                        sent_nb=k)
+                    if ngrams:
+                        writer.add_document(doc_title=key,
+                                            sec_title=title,
+                                            left_context=left_ctxt,
+                                            right_context=right_ctxt,
+                                            target=target,
+                                            ngram_target=target,
+                                            sent_nb=k)
+                    else:
+                        writer.add_document(doc_title=key,
+                                            sec_title=title,
+                                            left_context=left_ctxt,
+                                            right_context=right_ctxt,
+                                            target=target,
+                                            sent_nb=k)
+
             if i % 50 == 0:
                 print(f'at file {i} ({text.title, k}), it has {j+1} sections')
     writer.commit()
@@ -1022,13 +1034,16 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
         filename = f"{terms[0]}_example_queries_inflected.xml"
     with ix.searcher() as s,\
          open(filename, "w") as output:
-        print("<xml>", file=output)
+        soup = BeautifulSoup('', features='lxml')
+        xml = soup.new_tag("xml")
+        soup.append(xml)
         for term in terms:
             if term:
                 _query = f"{term} AND ({'~2 OR '.join(keywords)})"
             else:
                 _query = '~2 OR '.join(keywords)
-            print(f"<query term='{_query}'>", file=output)
+            query = soup.new_tag('query', term=f'{_query}')
+            xml.append(query)
             parsed_query = qp.parse(_query)
             r = s.search(parsed_query, terms=True, limit=None)
             if field == 'target':
@@ -1047,10 +1062,9 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
                                    strict_phrase='"' in _query)]
 
             for i, matched_s in enumerate(matches):
-                print(format_match(matched_s[:-1], i), file=output)
+                query.append(BeautifulSoup(format_match(matched_s[:-1], i), features='lxml'))
                 # matched_s.results.order = FIRST
-            print("</query>", file=output)
-        print("</xml>", file=output)
+        output.write(soup.prettify())
 
 
 def print_sample_file(keywords=expanded_dict, same_matches=None):
@@ -1071,6 +1085,7 @@ def print_sample_file(keywords=expanded_dict, same_matches=None):
         with open("annotations/match_ids.pickle", "rb") as ifile:
             match_order = pickle.load(ifile)
         filename = filename.split(".")[0] + "_reconstructed.xml"
+    total_matches = 0
     qp = QueryParser("body", schema=ix.schema)
     sentf = MyOldSentenceFragmenter(maxchars=1000, context_size=4)
     # analyzer = BasicTokenizer()  # | analysis.LowercaseFilter()
@@ -1085,19 +1100,17 @@ def print_sample_file(keywords=expanded_dict, same_matches=None):
     #                             scorer=BasicFragmentScorer(),
     #                             formatter=formatter)
     punct = re.compile(r"[!.?]")
-    with ix.searcher() as s,\
-         open(filename, "w") as output:
-        total_matches = 0
-        print("<xml>", file=output)
+    xml = BeautifulSoup('<xml></xml>', features='lxml')
+    with ix.searcher() as s:
         for key in list(expanded_dict):
             _query = '~2 OR '.join(expanded_dict[key])
-            print(f"<query term='{key}({_query})'>", file=output)
+            query = xml.new_tag('query', term=f'{key}({_query})')
             parsed_query = qp.parse(_query)
             r = s.search(parsed_query, terms=True, limit=None)
             matches = []
             nb_r = len(r)
             matches = [(hit, m, start_pos) for m in r
-                       for hit in highlighter.highlight_hit(
+                       for hit, start_pos in highlighter.highlight_hit(
                                m, "body", top=len(m.results),
                                strict_phrase='"' in _query)]
             total_matches += len(matches)
@@ -1108,22 +1121,27 @@ def print_sample_file(keywords=expanded_dict, same_matches=None):
                 match_ids = find_matched(matches,
                                          same_matches[key],
                                          match_order[key])
-            elif len(matches) > 10:
-                match_ids = random.sample(matches, 10)
+                for match, i in match_ids:
+                    i = int(i)
+                    if i < len(matches):
+                        query.append(format_match(matches[i][:-1], nb, i))
             else:
-                match_ids = list(range(len(matches)))
+                if len(matches) > 10:
+                    match_ids = random.sample(matches, 10)
+                else:
+                    match_ids = list(range(len(matches)))
+                for i, match in enumerate(match_ids):
+                    query.append(format_match(match[:-1], i))
+
             print(f"Query {key}: {len(matches)} matches")
-            for i, nb in match_ids:
-                i = int(i)
-                if i < len(matches):
-                    print(format_match(matches[i][:-1], nb, i), file=output)
-            print("</query>", file=output)
-        print("</xml>", file=output)
+            xml.xml.append(query)
     print(f"{total_matches} total matches")
+    with open(filename, "w") as output:
+        output.write(xml.prettify())
 
 
 def find_matched(matches, match_dict, order):
-    """match hits to previously sampled matches by document and section ids
+    """match hits to previously sampled matches by document, section ids
     and target sentence and order by original match number.
 
     This is necessary because the previously retrieved match numbers do not
@@ -1242,15 +1260,19 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                             'If the index schema does not have a target or' +
                             'body field, specify another field to search!')
     qp = QueryParser(field, schema=ix.schema)
+    qp.add_plugin(RegexPlugin())
     text = Text('')
     text.from_html(f'documents/ft_{id_}.html')
     print(f'documents/ft_{id_}.html')
     matches_by_section = {}
     _query = ' OR '.join(keywords)
     if additional_terms:
-        for term_list in additional_terms:
-            print(term_list)
-            terms = ' OR '.join(term_list)
+        for i, term_list in enumerate(additional_terms):
+            if i > 0:
+                print(term_list)
+                terms = ' OR '.join([f'r"{t}"' for t in term_list])
+            else:
+                terms = ' OR '.join(term_list)
             _query = f"({terms}) AND ({_query})"
     with ix.searcher() as searcher:
         query = qp.parse(
@@ -1303,10 +1325,9 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
         head = query_el
     for section in text.section_titles:
         sec = output.new_tag('section')
-        section = re.sub(r'\s+', ' ', section)
         if format_ == 'html':
             heading = output.new_tag('h2')
-            heading.append(section)
+            heading.append(section)#write_markup(re.sub(r'\s+', ' ', section), format_))
             sec.append(heading)
             head.append(sec)
             list_ = output.new_tag('ol')
@@ -1323,6 +1344,10 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                     sec.append(el.match)
                 else:
                     el.p.em.name = 'b'
+                    for i, content in enumerate(el.p.b.contents):
+                        if type(content) == bs4.element.Tag:
+                            el.p.b.contents[i] = content.text
+                        # el.p.b.contents[i] = write_markup(el.p.b.contents[i], format_)
                     element = output.new_tag('li')
                     element.append(el.p)
                     list_.append(element)
@@ -1332,19 +1357,28 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
         if len(additional_terms) > 1:
             with open('document_search/' +
                       f'{id_}_{year}_incr_decr_custom' +
-                      f' document_search.{format_}',
+                      f'_document_search.{format_}',
                       'w') as ofile:
-                ofile.write(output.prettify())
+                if format_ == 'html':
+                    ofile.write(output.prettify(formatter='html5'))
+                else:
+                    ofile.write(output.prettify())
         else:
             with open('document_search/' +
                       f'{id_}_{year}_incr_decr_document_search.{format_}',
                       'w') as ofile:
-                ofile.write(output.prettify())
+                if format_ == 'html':
+                    ofile.write(output.prettify(formatter='html5'))
+                else:
+                    ofile.write(output.prettify())
     else:
         with open('document_search/' +
                   f'{id_}_{year}_document_search.{format_}',
                   'w') as ofile:
-            ofile.write(output.prettify())
+            if format_ == 'html':
+                ofile.write(output.prettify(formatter='html5'))
+            else:
+                ofile.write(output.prettify())
     print(len(matches_by_section))
     return len(text.section_titles), len(matches)
 
@@ -1389,21 +1423,22 @@ if __name__ == "__main__":
            'GVB386', 'GYB362', 'H1B314', 'H4B391', 'H7B312']
     match_counter = 0
     sec_counter = 0
-    format_ = 'xml'
+    format_ = 'html'
     for i, id_ in enumerate(ids):
         print(years[i], id_)
-        secs, matches = query_document(ix, id_, keywords=query_list,
-                                       year=years[i], format_=format_,
-                                       field='target', context_size=2)
+        # secs, matches = query_document(ix, id_, keywords=query_list,
+        #                                year=years[i], format_=format_,
+        #                                field='target', context_size=2)
 
         secs, matches = query_document(ix, id_, keywords=query_list,
                                        year=years[i], format_=format_,
                                        additional_terms=[decr_terms],
                                        field='target')
-        secs, matches = query_document(ix, id_, keywords=query_list,
-                                       year=years[i], format_=format_,
-                                       additional_terms=[decr_terms, topics[1]],
-                                       field='target')
+        # secs, matches = query_document(ix, id_, keywords=query_list,
+        #                                year=years[i], format_=format_,
+        #                                additional_terms=[decr_terms,
+        #                                [term for topic in topics for term in topic]],
+        #                                field='target')
         
         print(secs, matches)
         sec_counter += secs
