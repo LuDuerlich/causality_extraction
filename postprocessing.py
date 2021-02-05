@@ -9,6 +9,22 @@ import re
 import regex
 import unicodedata
 
+
+def fix_file(filename):
+    """replace magic characters in a markup file with entity characters"""
+    if filename.endswith('.html'):
+        markup = 'html'
+    elif filename.endswith('.xml'):
+        markup = 'xml'
+    with open(filename) as ifile:
+        soup = BeautifulSoup(ifile.read(), parser=markup)
+    with open(out, 'w') as ofile:
+        if markup == 'html':
+            ofile.write(text.prettify(formatter='html5'))
+        else:
+            ofile.write(text)
+
+
 def remove_accent_chars(x: str):
     return regex.sub(r'\p{Mn}', '', unicodedata.normalize('NFKD', x))
 
