@@ -13,6 +13,7 @@ import sys
 from search_terms import search_terms, expanded_dict, incr_dict, decr_dict
 # sys.path.append("/Users/luidu652/Documents/causality_extraction/whoosh/src/")
 # from whoosh.analysis import SpaceSeparatedTokenizer
+from util import find_nearest_neighbour
 from whoosh.fields import Schema, TEXT, KEYWORD, ID, STORED,\
     NUMERIC, FieldType
 from whoosh.qparser import QueryParser, RegexPlugin
@@ -29,7 +30,12 @@ schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer,
                 sec_title=TEXT(stored=True, analyzer=analyzer,
                                lang='se'),
                 target=TEXT(stored=True, phrase=True,
-                            analyzer=analyzer, lang='se'),
+                            analyzer=analyzer,
+                            lang='se'),
+                parsed_target=TEXT(stored=True, phrase=True,
+                            analyzer=analysis.SpaceSeparatedTokenizer() |\
+                            analysis.LowercaseFilter(),
+                            lang='se'),
                 left_context=TEXT(stored=True, phrase=False,
                                   analyzer=analyzer, lang='se'),
                 right_context=TEXT(stored=True, phrase=False,
@@ -43,7 +49,7 @@ def strip_tags(string):
 
 
 def create_index(path="test_index/", ixname="test", random_files=False,
-                 schema=schema, add=False, filenames=None, n=5, ngrams=False):
+                 schema=schema, add=False, filenames=None, n=5, parse=False):
     """Create or add to a specified index of files in documents.tar.
 
     Parameters:
@@ -139,18 +145,23 @@ def create_index(path="test_index/", ixname="test", random_files=False,
                             right_ctxt = sents[k+1:min(len(sents), k+1+n)]
                     target = str(sents[k])
                     title = re.sub(r'\s+', ' ', section.title)
-                    right_ctxt = re.sub(r'\s+', ' ', "###".join(right_ctxt))
-                    left_ctxt = re.sub(r'\s+', ' ', "###".join(left_ctxt))
                     # apparently, whoosh does not preserve newlines, so we have to
                     # mark sentence boundaries another way
-                    if ngrams:
+
+                    right_ctxt = re.sub(r'\s+', ' ', "###".join(right_ctxt))
+                    left_ctxt = re.sub(r'\s+', ' ', "###".join(left_ctxt))
+
+                    if parse:
+                        parsed_target = " ".join(['//'.join([token.text, token.tag_, token.dep_])
+                                  for token in model(target)])
                         writer.add_document(doc_title=key,
                                             sec_title=title,
                                             left_context=left_ctxt,
                                             right_context=right_ctxt,
                                             target=target,
-                                            ngram_target=target,
+                                            parsed_target=parsed_target,
                                             sent_nb=k)
+
                     else:
                         writer.add_document(doc_title=key,
                                             sec_title=title,
@@ -379,14 +390,33 @@ def format_match(match, match_nb, org_num=None, format_='xml'):
         xml_match += f"' "
     xml_match += (f"doc='{strip_tags(title)}' " +
                   f"section='{sec_title}'>" + "\n")
-    xml_match += match[0] + "\n"
+    # print(match[0])
+    # print(match[1]['parsed_target'])
+    # remove keyword markup
+    hit = re.sub(r'</?b>', '', match[0])
+    # remove tags
+    hit = ' '.join([token.split('//')[0] for token in hit.split()])
+    # print(hit)
+    xml_match += re.sub(r' ([?.,:;!])',r'\1',
+                        hit) + "\n"
     xml_match += f"</{tag}>"
     return xml_match
 
 
+def format_parsed_query(term_list, strict=False):
+    if strict:
+        return Or([Regex('parsed_target', fr"^{t}//") for t in term_list])
+    return Or([Regex('parsed_target', fr"{t}") for t in term_list])
+
+
+def format_simple_query(term_list):
+    return ' OR '.join(term_list)
+
+
 def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                    format_='xml', year='', additional_terms=[],
-                   field=None, context_size=2):
+                   field=None, context_size=2, query_expansion=False,
+                   exp_factor=3, prefix=""):
     """search for matches within one document
     Parameters:
                ix (FileIndex):
@@ -437,20 +467,35 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
     print(f'documents/ft_{id_}.html')
     matches_by_section = {}
     _query = ' OR '.join(keywords)
+    prefix = f'{prefix}{id_}_{year}_'
+    if query_expansion:
+        prefix += 'extended_'
     if additional_terms:
+        if 'parsed_target' in ix.schema.names():
+            format_query = format_parsed_query
+        else:
+            format_query = format_simple_query
         for i, term_list in enumerate(additional_terms):
             if i > 0:
-                print(term_list)
-                terms = ' OR '.join([f'r"{t}"' for t in term_list])
+                if query_expansion:
+                    term_list_ = []
+                    for term in term_list:
+                        term_list_.append(find_nearest_neighbour(term, exp_factor)[0])
+                    additional_terms[i] = term_list_
+                    terms = Or([format_query(q) for q in term_list_])
+                else:
+                    terms = format_query(term_list)
             else:
-                terms = ' OR '.join(term_list)
+                terms = format_query(term_list, strict=True)
             _query = f"({terms}) AND ({_query})"
     with ix.searcher() as searcher:
         query = qp.parse(
             f'((doc_title:{id_}) AND ({_query}))')
+        # print(query)
         res = searcher.search(query, terms=True, limit=None)
         if field == 'target':
             matches = []
+            print(len(res))
             for m in res:
                 # print(len(m), len(res), m['sec_title'])
                 hits = highlighter.highlight_hit(
@@ -527,7 +572,7 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
     if additional_terms:
         if len(additional_terms) > 1:
             with open('document_search/' +
-                      f'{id_}_{year}_incr_decr_custom' +
+                      f'{prefix}_incr_decr_custom' +
                       f'_document_search.{format_}',
                       'w') as ofile:
                 if format_ == 'html':
@@ -536,7 +581,7 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                     ofile.write(output.prettify())
         else:
             with open('document_search/' +
-                      f'{id_}_{year}_incr_decr_document_search.{format_}',
+                      f'{prefix}_incr_decr_document_search.{format_}',
                       'w') as ofile:
                 if format_ == 'html':
                     ofile.write(output.prettify(formatter='html5'))
@@ -544,7 +589,7 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                     ofile.write(output.prettify())
     else:
         with open('document_search/' +
-                  f'{id_}_{year}_document_search.{format_}',
+                  f'{prefix}_document_search.{format_}',
                   'w') as ofile:
             if format_ == 'html':
                 ofile.write(output.prettify(formatter='html5'))
@@ -583,33 +628,36 @@ if __name__ == "__main__":
              'documents/ft_GRB350d3.html', 'documents/ft_GVB386.html',
              'documents/ft_GYB362.html', 'documents/ft_H1B314.html',
              'documents/ft_H4B391.html', 'documents/ft_H7B312.html']
-    create_index('new_schema_document_ix', schema=schema, filenames=paths)
+    create_index('parsed_schema_document_ix', schema=schema, filenames=paths, parse=True)
     query_list = [wf for term in expanded_dict.values() for wf in term]
     decr_terms = [wf for term in {**decr_dict, **incr_dict}.values()
                   for wf in term]
-    ix = index.open_dir('new_schema_document_ix', indexname='test')
+    ix = index.open_dir('parsed_schema_document_ix', indexname='test')
     years = ['1995', '1997', '1998', '2001', '2004', '2007', '2010',
              '2013', '2016', '2019']
     ids = ['GIB33', 'GKB3145d3', 'GLB394', 'GOB345d1', 'GRB350d3',
            'GVB386', 'GYB362', 'H1B314', 'H4B391', 'H7B312']
+    topics = ['arbetslöshet', 'tillväxt', 'klimat', 'missbruk', 'hälsa']
     match_counter = 0
     sec_counter = 0
     format_ = 'html'
-    for i, id_ in enumerate(ids[:1]):
+    # for i, id_ in enumerate(ids[1:2]):
+    for i, id_ in enumerate(ids):
         print(years[i], id_)
         # secs, matches = query_document(ix, id_, keywords=query_list,
         #                                year=years[i], format_=format_,
         #                                field='target', context_size=2)
 
+        # secs, matches = query_document(ix, id_, keywords=query_list,
+        #                               year=years[i], format_=format_,
+        #                               additional_terms=[decr_terms],
+        #                               field='target')
         secs, matches = query_document(ix, id_, keywords=query_list,
                                        year=years[i], format_=format_,
-                                       additional_terms=[decr_terms],
-                                       field='target')
-        # secs, matches = query_document(ix, id_, keywords=query_list,
-        #                                year=years[i], format_=format_,
-        #                                additional_terms=[decr_terms,
-        #                                [term for topic in topics for term in topic]],
-        #                                field='target')
+                                       additional_terms=[decr_terms] + [topics],
+                                       #[term for topic in topics for term in topic]],
+                                       field='target', query_expansion=True, exp_factor=10,
+                                       prefix='parsed_ix_')
         
         print(secs, matches)
         sec_counter += secs
