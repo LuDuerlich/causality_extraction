@@ -13,6 +13,7 @@ import unicodedata
 from util import find_nearest_neighbour
 
 path = os.path.dirname(os.path.realpath(__file__))
+
 def fix_file(filename):
     """replace magic characters in a markup file with entity characters"""
     if filename.endswith('.html'):
@@ -23,7 +24,8 @@ def fix_file(filename):
         filename = f'{path}/{filename}'
     with open(filename) as ifile:
         soup = BeautifulSoup(ifile.read(), parser=markup)
-    dir_, name = filename.split('/', 2)
+    segments = filename.split('/')
+    dir_, name = '/'.join(segments[:-1]), segments[-1]
     with open('/'.join([dir_, 'new_' + name]), 'w') as ofile:
         if markup == 'html':
             ofile.write(soup.prettify(formatter='html5'))
@@ -177,7 +179,7 @@ def segment_match(match, query, highlight_query=False, context=2,
     match_sequence = None
     if match.b:
         query_matches = separate_query_terms(match("b"), query)
-        query_matches = [r" *(\b.+\b *)?".join(t) for t in query_matches]
+        q_ex = [r" *(\b.+\b *)?".join(t) for t in query_matches]
         q_ex = re.compile(r'|'.join(query_matches))
     if match.em:
         match_sequence = match.em.text
@@ -200,7 +202,7 @@ def segment_match(match, query, highlight_query=False, context=2,
                 match_id.append(i)
             elif q_ex and q_ex.search(str(sent)):
                 match_by_term.append(i)
-            elif query_matches and query_matches[j] in str(sent):
+            elif query_matches and re.match(query_matches[j], str(sent)):
                 match_first_term.append(i)
                 j += 1
     # fall-back if the match sequence is now segmented differently
@@ -227,8 +229,14 @@ def segment_match(match, query, highlight_query=False, context=2,
 
 
 def separate_query_terms(query_terms, query_exp):
+    """reconstruct phrases and single terms within the query.
+    The output is a regex containing one word of context between
+    two parts of the same phrase if the phrase is segmented.
+    """
     terms = []
     new_term = True
+    if not query_exp.startswith('|') and not query_exp.endswith('|'):
+        query_exp = f'| {query_exp} |'
     for i, term in enumerate(query_terms):
         t = term.text.strip()
         context = ""
@@ -238,26 +246,37 @@ def separate_query_terms(query_terms, query_exp):
             previous = str(previous[-1])
             if i > 0 and previous not in [query_terms[i-1], ".", "?", "!"]:
                 context = re.sub(r'([\[\])(\\?+*])', r'\\\1', previous)
-                # print(f'previous: "{previous}" "{context}"')
         if not new_term:
-            if f'| {" ".join(terms[-1])} |'.casefold()\
-                                           .replace('*', '') in query_exp:
+            middle_term = re.sub(r'\(\w+\)\? \*| +\*', ' ',
+                                 f'|{"".join(terms[-1])} |'.casefold())
+            combined_term = re.sub(r'\(\w+\)\? \*| +\*', ' ',
+                                f'{" ".join(terms[-1] + [t])} '.casefold())
+            if middle_term in query_exp:
                 new_term = True
-            elif f'{" ".join(terms[-1] + [t])} '.casefold()\
-                                                .replace('*', '') in query_exp:
-                terms[-1].append(f'{context} *{t}')
+            elif combined_term in query_exp:
+                if context:
+                    terms[-1].append(f'({context})? *{t}')
+                else:
+                    terms[-1].append(f' *{t}')
                 continue
         # start of a new term
         if new_term:
             if f'| {t} |'.casefold() in query_exp:
-                terms.append([f'{context} *{t}'])
+                if context:
+                    terms.append([f'({context})? *{t}'])
+                else:
+                    terms.append([f' *{t}'])
             elif f'| {t} '.casefold() in query_exp:
-                terms.append([f'{context} *{t}'])
+                if context:
+                    terms.append([f'({context})? *{t}'])
+                else:
+                    terms.append([f' *{t}'])
                 new_term = False
     return terms
 
 
-def format_xml_match(sents, match_id, context, highlight_query, query_matches):
+def format_xml_match(sents, match_id, context, highlight_query,
+                     query_matches=[]):
     """format match in xml style. Returns a filled bs4.element.Tag
     Parameters:
                sents (list):
@@ -291,6 +310,9 @@ def format_xml_match(sents, match_id, context, highlight_query, query_matches):
                 for q in query_matches:
                     q_tag = soup.new_tag("b")
                     text = str(q)
+                    text = re.sub(r'[()?*]', '', text).strip()
+                    if not text:
+                        continue
                     q_tag.append(text)
                     if text in q_tags:
                         q_tags[text].append(q_tag)
@@ -299,12 +321,14 @@ def format_xml_match(sents, match_id, context, highlight_query, query_matches):
                     tag_order.append(text)
                 for token in sents[id_].split():
                     text = str(token)
-                    if tag_order and text == tag_order[0]:
+                    if tag_order and text.strip('.?!:,;') == tag_order[0]:
                         tag.append(" ")
-                        tag.append(q_tags[text].pop(0))
+                        tag.append(q_tags[text.strip('.?!:,;')].pop(0))
                         tag_order.pop(0)
-                        if not q_tags[text]:
-                            del q_tags[text]
+                        if text.strip('.?!:,;') != text:
+                            tag.append(text[-1])
+                        if not q_tags[text.strip('.?!:,;')]:
+                            del q_tags[text.strip('.?!:,;')]
                     else:
                         if text in ".,;:!?":
                             tag.append(text)
@@ -666,7 +690,7 @@ def highlight_additions(filename, old_file, output, class_only=True):
     with open(filename) as newfile,\
          open(old_file) as oldfile:
         soup = BeautifulSoup(newfile.read(),
-                              parser='html.parser')
+                             parser='html.parser')
         new_p = soup.find_all('p')
         if class_only:
             old_p = BeautifulSoup(oldfile.read(),
@@ -738,7 +762,7 @@ def highlight_additions(filename, old_file, output, class_only=True):
 
 # files = glob.glob('incr_decr_docs/*.html')
 terms = [['arbetslöshet'], ['tillväxt'],
-          ['klimat'], ['missbruk'], ['hälsa']]
+         ['klimat'], ['missbruk'], ['hälsa']]
 topics = [['arbetslöshet', 'arbetslöshet', 'arbetslösheten', 'Arbetslösheten'],
           ['tillväxt', 'tillväxt', 'tillväxten', 'expansion'],
           ['klimat', 'klimat', 'klimatet', 'Klimat'],
@@ -816,6 +840,10 @@ if __name__ == '__main__':
 
     # SpaCy parsing example
     width = 20
-    parsed = model('''Vi bedömer att den minskade byråkratin i sig kommer att leda till ett förbättrat djurskydd. En annan ordning skulle enligt domstolen leda till att legitimiteten för bestämmelserna minskade , framför allt mot bakgrund av att det oftast är först vid en ansökan om förlängning som det kan kontrolleras om förutsättningarna varit uppfyllda.''')
+    parsed = model('''Vi bedömer att den minskade byråkratin i sig kommer att leda till \
+ett förbättrat djurskydd. En annan ordning skulle enligt domstolen leda till att \
+legitimiteten för bestämmelserna minskade , framför allt mot bakgrund av att det oftast \
+är först vid en ansökan om förlängning som det kan kontrolleras om förutsättningarna \
+varit uppfyllda.''')
     for token in parsed:
         print(f"{token.text: <{width}} {token.tag_: <{width}} {token.dep_: <{width}}")
