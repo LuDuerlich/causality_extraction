@@ -8,28 +8,7 @@ import bs4
 import logging
 from langdetect import detect_langs, lang_detect_exception
 
-# name format is sou_<year>_<id>.pdf or column 1 for html
-# (check column 7 and 16 for sou with multiple parts at
-# https://data.riksdagen.se/dokument/
-# do we care about relations between SOUs in multiple parts?
-# are the summaries useful?
-# look for json and extract directly through document_url_text
-# / document_url_html
-# verify if we get all the documents
-# hyphenation
-# some have English summary?
-# to keep or to discard headings / titles?
-# summary separate from full text?
-# remove date and place + SOU ID?
-# work with two-column format -> one case of suggested change of wording
-# i.e. large part of the texts are really similar
-# to fix: GPB334, 'H3B333', GVB315'
-# broken files https://data.riksdagen.se/dokument/GSB321.html
-# ignore file : GQB399d2 - GQB399d7 (just tables / figures)
-# English files GLB3132d1 & d2
-# filter summaries by length
-# bf in paragraphs not titles
-
+path = os.path.dirname(os.path.realpath(__file__))
 
 def hierarchy_heuristics(sections, debug=False, doc_title=None):
     section_titles = {}
@@ -884,7 +863,7 @@ logging.basicConfig(filename="extraction.log",
                     # level=logging.DEBUG
                     level=logging.INFO
                     )
-with open("documents.pickle", "rb") as ifile:
+with open(f"{path}/documents.pickle", "rb") as ifile:
     docs = pickle.load(ifile)
 
 
