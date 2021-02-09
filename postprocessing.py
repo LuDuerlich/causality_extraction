@@ -634,11 +634,167 @@ def format_pilot_study(files, topics, search_context=True):
                     sec.append(match)
                     matches.append(sec)
                     last_section = sec
-    
+
     with open(f'{prefix}combined_topics.html', 'w') as ofile:
         matches = matches.parent
         ofile.write(matches.prettify(formatter='html5'))
 
+
+def highlight_additions(filename, old_file, output):
+    """
+    compare all p tags in old and new file and only print the changed ones to
+    output.
+    """
+    def remove_wspace(el):
+        return re.sub(r' ([?!.,;:])', r'\1',
+                      re.sub('  +', ' ',
+                             re.sub('\n', ' ', el.text)))
+
+    def is_topic_match(el):
+        return hasattr(el, 'attrs') and 'class' in el.attrs
+
+    with open(filename) as newfile,\
+         open(old_file) as oldfile:
+        new_p = BeautifulSoup(newfile.read(),
+                              parser='html.parser').find_all('p')
+        old_p = BeautifulSoup(oldfile.read(),
+                              parser='html.parser').find_all(is_topic_match)
+    print(len(old_p), len(new_p))
+    additions = []
+    counter = 0
+    for new_paragraph in new_p:
+        is_new = True
+        for old_paragraph in old_p:
+            if remove_wspace(new_paragraph.b) == \
+               remove_wspace(old_paragraph.b):
+                counter += 1
+                if new_paragraph['class'] == old_paragraph['class']:
+                    is_new = False
+                    break
+        if is_new:
+            additions.append(new_paragraph)
+    matches = BeautifulSoup('<html><head></head><body></body></html>',
+                            parser='html.parser')
+    style = matches.new_tag('style')
+    colors = ['lightblue', 'lightgreen', 'coral', 'gold', 'plum']
+    style.append("""body {
+    margin-top: 4%;
+    margin-bottom: 8%;
+    margin-right: 13%;
+    margin-left: 13%;
+    }""")
+
+    for i, topic in enumerate(terms):
+        style.append(f'.{remove_accent_chars(topic[0])}' +
+                     ' { background-color:' + colors[i] + ';}')
+    matches.head.append(style)
+    matches = matches.body
+    last_section = None
+    for match in additions:
+        if 'class' in match.attrs:
+            tag = soup.new_tag('div')
+            tag.append(f"Topic: {' '.join(match['class'])}")
+            match['class'] = [remove_accent_chars(c) for c in match['class']]
+            match.append(tag)
+
+            header_text = f"Document {match['doc']}, " +\
+                f"Section {match['section']}"
+            if last_section and header_text == last_section.h3.text:
+                last_section.append(match)
+            else:
+                sec = soup.new_tag('section')
+                header = soup.new_tag('h3')
+                header.append(header_text)
+                sec.append(header)
+                sec.append(match)
+                matches.append(sec)
+                last_section = sec
+
+    with open(f'{output}.html', 'w') as ofile:
+        matches = matches.parent
+        ofile.write(matches.prettify(formatter='html5'))
+
+
 # files = glob.glob('incr_decr_docs/*.html')
-# topics = [['arbetslöshet'], ['tillväxt'],
-# ['klimat'], ['missbruk'], ['hälsa']]
+terms = [['arbetslöshet'], ['tillväxt'],
+          ['klimat'], ['missbruk'], ['hälsa']]
+topics = [['arbetslöshet', 'arbetslöshet', 'arbetslösheten', 'Arbetslösheten'],
+          ['tillväxt', 'tillväxt', 'tillväxten', 'expansion'],
+          ['klimat', 'klimat', 'klimatet', 'Klimat'],
+          ['missbruk', 'missbruk', 'missbruket', '##missbruk'],
+          ['hälsa', 'hälsa', 'Hälsa', 'hälsar']]
+topics = [['arbetslöshet', 'arbetslösheten', 'Arbetslösheten', 'arbetslöshets', 'arbetslösa', 'arbetslös', 'sysselsättnings', 'Arbetsmarknad', 'arbetsmarknad', '##slöshet'],
+          ['tillväxt', 'tillväxten', 'expansion', '##växt', 'tillväx', '##växten', 'växa', 'expansionen', 'växte', 'växande'],
+          ['klimat', 'klimatet', 'Klimat', '##klimat', 'Klimatet', '##sklimat', 'miljö', 'växthus', '##limat', 'temperatur'],
+          ['missbruk', 'missbruket', '##missbruk', '##issbruk', 'missbrukare', 'knark', 'narkoman', 'narkomaner', 'alkoholm', '##issbrukare'],
+          ['hälsa', 'Hälsa', 'hälsar', 'hälsade', 'hälsan', 'hälsas', 'hälsotillstånd', 'hälso', 'ohälsa', 'Hälso']]
+# remove wordpiece segmentation characters
+topics = [[term.lstrip('##') for term in topic]for topic in topics]
+topics = [['arbetslöshet', 'långtidsarbetslöshet', 'massarbetslöshet', 'arbetslöshet.', 'Arbetslöshet', 'arbetslösheten', 'ungdomsarbetslöshet', 'strukturarbetslöshet', 'Massarbetslöshet', 'deltidsarbetslöshet'],
+          ['tillväxt', 'BNPtillväxt', 'tillväxt.', 'jobbtillväxt', 'tillväxtökning', 'sysselsättningstillväxt', 'produktivitetstillväxt', 'tillväxten', 'produktionstillväxt', 'företagstillväxt'],
+          ['klimat', 'klimat.', 'klimatet', 'sommarklimat', 'lokalklimat', 'vinterklimat', 'uteklimat', 'idéklimat', 'klimatOm', 'kontinentalklimat'],
+          ['missbruk', 'missbruk.', 'narkotikamissbruk', 'missbruket', 'opiatmissbruk', 'Missbruk', 'spritmissbruk', 'blandmissbruk', 'cannabismissbruk', 'missbruk-'],
+          ['hälsa', 'hälsa.', 'Hälsa', 'hälsa-', 'hälsa2', 'hälsah', 'allmänhälsa', 'hälsaGod', 'hälsan', 'hälsan.']]
+
+if __name__ == '__main__':
+    ft = fasttext.load_model('fastText/cc.sv.300.bin')
+    n_terms = [5, 10, 15, 20]
+    ft_neighbors = None
+    BERT_neighbors = None
+    ft_prefix = ""
+    BERT_prefix = ""
+    for i in n_terms:
+        max_n = max(n_terms)
+        print(f'expansion parameter: {i}')
+        topics = []
+        # fasttext terms
+        if ft_neighbors is None:
+            ft_neighbors = {}
+        for term in terms:
+            term = term[0]
+            if term not in ft_neighbors:
+                ft_neighbors[term] = ft.get_nearest_neighbors(term, max_n)
+            topics.append([term] +
+                          [term for sim, term in ft_neighbors[term]][:i])
+        # prefix = f'expanded_fasttext_{i}_'
+        prefix = f'word_b_expanded_fasttext_{i}_'
+        print(topics[0])
+        format_pilot_study(files, topics, False, prefix=prefix)
+        if ft_prefix:
+            highlight_additions(f'{prefix}target_only_combined_topics.html',
+                                'target_only_combined_topics.html',
+                                f'document_search/{prefix}additions')
+        else:
+            highlight_additions(f'{prefix}target_only_combined_topics.html',
+                                f'{ft_prefix}target_only_combined_topics.html',
+                                f'document_search/{prefix}additions')
+        ft_prefix = prefix
+
+        # BERT terms
+        topics = []
+        if BERT_neighbors is None:
+            BERT_neighbors = {}
+        for term in terms:
+            term = term[0]
+            if term not in BERT_neighbors:
+                BERT_neighbors[term] = find_nearest_neighbour(term, max_n)[0]
+            topics.append(BERT_neighbors[term][:i])
+        print(topics[0])
+        # prefix = f'expanded_BERT_{i}_'
+        prefix = f'word_b_expanded_BERT_{i}_'
+        format_pilot_study(files, topics, False, prefix=prefix)
+        if BERT_prefix:
+            highlight_additions(f'{prefix}target_only_combined_topics.html',
+                                f'{BERT_prefix}target_only_combined_topics.html',
+                                f'document_search/{prefix}additions')
+        else:
+            highlight_additions(f'{prefix}target_only_combined_topics.html',
+                                'target_only_combined_topics.html',
+                                f'document_search/{prefix}additions')
+        BERT_prefix = prefix
+
+    # SpaCy parsing example
+    width = 20
+    parsed = model('''Vi bedömer att den minskade byråkratin i sig kommer att leda till ett förbättrat djurskydd. En annan ordning skulle enligt domstolen leda till att legitimiteten för bestämmelserna minskade , framför allt mot bakgrund av att det oftast är först vid en ansökan om förlängning som det kan kontrolleras om förutsättningarna varit uppfyllda.''')
+    for token in parsed:
+        print(f"{token.text: <{width}} {token.tag_: <{width}} {token.dep_: <{width}}")

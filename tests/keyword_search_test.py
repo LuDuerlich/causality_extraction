@@ -1,5 +1,6 @@
 import pytest
 import re, sys
+sys.path.append("..")#"/Users/luidu652/Documents/causality_extraction/")
 import os
 from whoosh import index, query, fields, analysis
 from whoosh.util.testing import TempIndex
@@ -131,10 +132,12 @@ def test_extract_sample():
 
 def test_create_index():
     ix_path = '__test__index'
+    if os.path.exists(ix_path):
+        os.system(f'rm -r {ix_path}')
     filenames = ['documents/ft_GTB366d4.html']
-    create_index(path=ix_path, filenames=filenames, ixname=None)
+    create_index(path_=ix_path, filenames=filenames, ixname=None)
     ix = index.open_dir(ix_path)
-    assert ix.doc_count() == 127,\
-        'Section segmentation not different from previous version!' +\
-        f'should be 127 but the index now counts {ix.doc_count()}!'
+    assert ix.doc_count() == 128,\
+        'Section segmentation is different from previous version!' +\
+        f'should be 128 but the index now counts {ix.doc_count()}!'
     os.system(f'rm -r {ix_path}')
