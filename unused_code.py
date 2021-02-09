@@ -422,10 +422,12 @@ class MySentenceFragmenter(Fragmenter):
                                  match_s_boundaries=sents[i])
 
 
-def compare_files(name):
+def compare_files(file_a, file_b):
     """helper to compare use of Highlighter and CustomHighlighter"""
-    with open(f'document_search/{name}') as ifile:
+    # with open(f'document_search/{name}') as ifile:
+    with open(file_a) as ifile:
         new_f = BeautifulSoup(ifile.read())
-    with open(f'old_doc_search/{name}') as ifile:
+    # with open(f'old_doc_search/{name}') as ifile:
+    with open(file_b) as ifile:
         old_f = BeautifulSoup(ifile.read())
-    assert new_f == old_f
+    assert new_f.body == old_f.body
