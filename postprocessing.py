@@ -1,34 +1,41 @@
 from bs4 import BeautifulSoup
+import fasttext
 from spacy.tokens.span import Span
 from search_terms import expanded_dict
 import spacy
 import pytest
 import copy
 import csv
+import os
 import re
 import regex
 import unicodedata
+from util import find_nearest_neighbour
 
-
+path = os.path.dirname(os.path.realpath(__file__))
 def fix_file(filename):
     """replace magic characters in a markup file with entity characters"""
     if filename.endswith('.html'):
         markup = 'html'
     elif filename.endswith('.xml'):
         markup = 'xml'
+    if not os.path.exists(filename):
+        filename = f'{path}/{filename}'
     with open(filename) as ifile:
         soup = BeautifulSoup(ifile.read(), parser=markup)
-    with open(out, 'w') as ofile:
+    dir_, name = filename.split('/', 2)
+    with open('/'.join([dir_, 'new_' + name]), 'w') as ofile:
         if markup == 'html':
-            ofile.write(text.prettify(formatter='html5'))
+            ofile.write(soup.prettify(formatter='html5'))
         else:
-            ofile.write(text)
+            ofile.write(soup)
 
 
 def remove_accent_chars(x: str):
     return regex.sub(r'\p{Mn}', '', unicodedata.normalize('NFKD', x))
 
-with open("samples/hit_samplereconstructed.xml") as ifile:
+
+with open(f"{path}/samples/hit_samplereconstructed.xml") as ifile:
     mark_up = BeautifulSoup(ifile.read(), features='lxml')
 # markup
 matches = mark_up.find_all('match')
@@ -36,7 +43,7 @@ queries = mark_up.find_all('query')
 
 # string representations
 hits = [match.text for match in matches]
-model_path = 'spacy_model/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
+model_path = f'{path}/spacy_model/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
 model = spacy.load(model_path)
 sentencizer = model.create_pipe('sentencizer')
 model.add_pipe(sentencizer)
@@ -558,7 +565,7 @@ def compare_boundaries():
 
 def target_search(match, topics):
     for topic in topics:
-        if re.search('|'.join(topic), match.b.text):
+        if re.search('|'.join(topic).replace('.', r'\.'), match.b.text):
             if 'class' not in match.attrs:
                 match['class'] = []
             match['class'].append(topic[0])
@@ -566,14 +573,14 @@ def target_search(match, topics):
 
 def context_search(match, topics):
     for topic in topics:
-        if re.search('|'.join(topic), match.text):
+        if re.search('|'.join(topic).replace('.', r'\.'), match.text):
             if 'class' not in match.attrs:
                 match['class'] = []
             match['class'].append(topic[0])
-            print(match['class'])
+            # print(match['class'])
 
 
-def format_pilot_study(files, topics, search_context=True):
+def format_pilot_study(files, topics, search_context=True, prefix=""):
     """apply topic filter to search results and output
        the initial hits with the ones matching the filters
        highlighted in colour.
@@ -590,7 +597,8 @@ def format_pilot_study(files, topics, search_context=True):
                     wether or not to filter based on the target
                     sentence only, or the full context window
     """
-    matches = BeautifulSoup('<html><head></head><body></body></html>', parser='html.parser')
+    matches = BeautifulSoup('<html><head></head><body></body></html>',
+                            parser='html.parser')
     style = matches.new_tag('style')
     colors = ['lightblue', 'lightgreen', 'coral', 'gold', 'plum']
     style.append("""body {
@@ -601,15 +609,16 @@ def format_pilot_study(files, topics, search_context=True):
     }""")
 
     for i, topic in enumerate(topics):
-        style.append(f'.{remove_accent_chars(topic[0])}' +' { background-color:' + colors[i] + ';}')
+        style.append(f'.{remove_accent_chars(topic[0])}' +
+                     ' { background-color:' + colors[i] + ';}')
     matches.head.append(style)
     matches = matches.body
     if search_context:
         search_funct = context_search
-        prefix = 'context_'
+        prefix += 'context_'
     else:
         search_funct = target_search
-        prefix = 'target_only_'
+        prefix += 'target_only_'
     last_section = None
     for file in files:
         with open(file) as ifile:
@@ -619,11 +628,12 @@ def format_pilot_study(files, topics, search_context=True):
                 if 'class' in match.attrs:
                     tag = soup.new_tag('div')
                     tag.append(f"Topic: {' '.join(match['class'])}")
-                    match['class'] = [remove_accent_chars(c) for c in match['class']]
+                    match['class'] = [remove_accent_chars(c)
+                                      for c in match['class']]
                     match.append(tag)
 
                 header_text = f"Document {match['doc']}, " +\
-                f"Section {match['section']}"
+                    f"Section {match['section']}"
                 if last_section and header_text == last_section.h3.text:
                     last_section.append(match)
                 else:
@@ -640,7 +650,7 @@ def format_pilot_study(files, topics, search_context=True):
         ofile.write(matches.prettify(formatter='html5'))
 
 
-def highlight_additions(filename, old_file, output):
+def highlight_additions(filename, old_file, output, class_only=True):
     """
     compare all p tags in old and new file and only print the changed ones to
     output.
@@ -655,11 +665,17 @@ def highlight_additions(filename, old_file, output):
 
     with open(filename) as newfile,\
          open(old_file) as oldfile:
-        new_p = BeautifulSoup(newfile.read(),
-                              parser='html.parser').find_all('p')
-        old_p = BeautifulSoup(oldfile.read(),
-                              parser='html.parser').find_all(is_topic_match)
-    print(len(old_p), len(new_p))
+        soup = BeautifulSoup(newfile.read(),
+                              parser='html.parser')
+        new_p = soup.find_all('p')
+        if class_only:
+            old_p = BeautifulSoup(oldfile.read(),
+                                  parser='html.parser').find_all(
+                                      is_topic_match)
+        else:
+            old_p = BeautifulSoup(oldfile.read(),
+                                  parser='html.parser').find_all('p')
+
     additions = []
     counter = 0
     for new_paragraph in new_p:
@@ -668,11 +684,16 @@ def highlight_additions(filename, old_file, output):
             if remove_wspace(new_paragraph.b) == \
                remove_wspace(old_paragraph.b):
                 counter += 1
-                if new_paragraph['class'] == old_paragraph['class']:
+                if class_only:
+                    if new_paragraph['class'] == old_paragraph['class']:
+                        is_new = False
+                        break
+                else:
                     is_new = False
                     break
         if is_new:
             additions.append(new_paragraph)
+    print(len(old_p), len(new_p), len(additions))
     matches = BeautifulSoup('<html><head></head><body></body></html>',
                             parser='html.parser')
     style = matches.new_tag('style')

@@ -26,6 +26,7 @@ import random
 import glob
 import pickle
 
+path = os.path.dirname(os.path.realpath(__file__))
 analyzer = StandardAnalyzer(stoplist=[])
 schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer,
                                lang='se'),
@@ -50,7 +51,7 @@ def strip_tags(string):
     return re.sub("<h1>|</h1>", "", string)
 
 
-def create_index(path="test_index/", ixname="test", random_files=False,
+def create_index(path_=f"{path}/test_index/", ixname="test", random_files=False,
                  schema=schema, add=False, filenames=None, n=5, parse=False):
     """Create or add to a specified index of files in documents.tar.
 
@@ -76,38 +77,38 @@ def create_index(path="test_index/", ixname="test", random_files=False,
                           within the section)
     """
 
-    if not path.endswith("/"):
-        path += "/"
-    if os.path.exists(path) and os.listdir(path):
+    if not path_.endswith("/"):
+        path_ += "/"
+    if os.path.exists(path_) and os.listdir(path_):
         if input(
                 "index directory not empty. delete content?(Y/n) > "
         ).casefold() != "y":
-            ix = index.open_dir(path, indexname=ixname)
+            ix = index.open_dir(path_, indexname=ixname)
         else:
-            print(f"clearing out {path} ...")
-            os.system(f"rm -r {path}*")
-            ix = index.create_in(path, schema, indexname=ixname)
+            print(f"clearing out {path_} ...")
+            os.system(f"rm -r {path_}*")
+            ix = index.create_in(path_, schema, indexname=ixname)
     else:
-        if not os.path.exists(path):
-            print(f'creating directory {path} ...')
-            os.system(f'mkdir {path}')
-        ix = index.create_in(path, schema, indexname=ixname)
+        if not os.path.exists(path_):
+            print(f'creating directory {path_} ...')
+            os.system(f'mkdir {path_}')
+        ix = index.create_in(path_, schema, indexname=ixname)
     writer = ix.writer()
     if random_files:
-        with open("ix_files.pickle", "rb") as ifile:
+        with open(f"{path}/ix_files.pickle", "rb") as ifile:
             seen = pickle.load(ifile)
             print(f'loading {len(seen)} seen files!')
         if not add:
             files = seen
         else:
-            with tarfile.open("documents.tar", "r") as ifile:
+            with tarfile.open(f"{path}/documents.tar", "r") as ifile:
                 summaries = [fi for fi in ifile.getnames() if
                              fi.startswith('documents/s_')]
             files = random.sample([el for el in summaries
                                    if el not in seen], 500)
             # I don't remember why this is here
             seen.extend(files)
-            with open("bt_ix_files.pickle", "wb") as ofile:
+            with open(f"{path}/bt_ix_files.pickle", "wb") as ofile:
                 pickle.dump(seen, ofile)
     elif filenames:
         print('index selected files')
@@ -116,7 +117,7 @@ def create_index(path="test_index/", ixname="test", random_files=False,
         files = ["H2B34", "H2B340", "H2B341", "H2B341", "H2B342",
                  "H2B343", "H2B344", "H2B345", "H2B346", "H2B347",
                  "H2B348", "H2B349", "H2B35"]
-    with tarfile.open("documents.tar", "r") as ifile:
+    with tarfile.open(f"{path}/documents.tar", "r") as ifile:
         n_files = len(files)
         print(f'{n_files} to be indexed')
         for i, key in enumerate(files):
@@ -175,12 +176,6 @@ def create_index(path="test_index/", ixname="test", random_files=False,
             if i % 50 == 0:
                 print(f'at file {i} ({text.title, k}), it has {j+1} sections')
     writer.commit()
-
-
-def escape_xml_refs(text):
-    return re.sub(" > ", " &gt; ",
-                  re.sub(" < ", " &lt; ",
-                         re.sub("&", "&amp;", text)))
 
 
 def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
@@ -272,7 +267,7 @@ def print_sample_file(keywords=expanded_dict, same_matches=None):
 
     filename = "hit_sample.xml"
     if same_matches:
-        with open("annotations/match_ids.pickle", "rb") as ifile:
+        with open(f"{path}/annotations/match_ids.pickle", "rb") as ifile:
             match_order = pickle.load(ifile)
         filename = filename.split(".")[0] + "_reconstructed.xml"
     total_matches = 0
@@ -362,7 +357,7 @@ def find_matched(matches, match_dict, order):
 def extract_sample():
     """extract matches and metadata from previously sampled queries"""
 
-    with open("samples/hit_sample.xml") as ifile:
+    with open(f"{path}/samples/hit_sample.xml") as ifile:
         soup = BeautifulSoup(ifile.read(), features='lxml')
     queries = {}
     for query in soup.find_all("query"):
@@ -383,24 +378,21 @@ def format_match(match, match_nb, org_num=None, format_='xml'):
     elif format_ == 'html':
         tag = 'p'
 
-    title = escape_xml_refs(match[1]['doc_title'])
-    sec_title = escape_xml_refs(match[1]['sec_title'])
+    title = match[1]['doc_title']
+    sec_title = match[1]['sec_title']
     xml_match = f"<{tag} match_nb='{match_nb}"
     if org_num:
         xml_match += f"({org_num})' "
     else:
         xml_match += f"' "
     xml_match += (f"doc='{strip_tags(title)}' " +
-                  f"section='{sec_title}'>" + "\n")
-    # print(match[0])
-    # print(match[1]['parsed_target'])
+                  f"section='{sec_title}'>")
     # remove keyword markup
     hit = re.sub(r'</?b>', '', match[0])
     # remove tags
     hit = ' '.join([token.split('//')[0] for token in hit.split()])
     # print(hit)
-    xml_match += re.sub(r' ([?.,:;!])',r'\1',
-                        hit) + "\n"
+    xml_match += re.sub(r' ([?.,:;!])', r'\1', hit)
     xml_match += f"</{tag}>"
     return xml_match
 
@@ -414,7 +406,7 @@ def format_parsed_query(term_list, strict=False):
 
 
 def format_simple_query(term_list):
-    return ' OR '.join(term_list)
+    return Or([Term('target', term) for term in term_list])
 
 
 def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
@@ -491,7 +483,7 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                     terms = format_query(term_list)
             else:
                 terms = format_query(term_list, strict=True)
-            _query = f"({terms}) AND ({_query})"
+            _query = f"{terms} AND ({_query})"
     with ix.searcher() as searcher:
         query = qp.parse(
             f'((doc_title:{id_}) AND ({_query}))')
@@ -575,7 +567,7 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
             head.append(sec)
     if additional_terms:
         if len(additional_terms) > 1:
-            with open('document_search/' +
+            with open(f'{path}/document_search/' +
                       f'{prefix}_incr_decr_custom' +
                       f'_document_search.{format_}',
                       'w') as ofile:
@@ -584,7 +576,7 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                 else:
                     ofile.write(output.prettify())
         else:
-            with open('document_search/' +
+            with open(f'{path}/document_search/' +
                       f'{prefix}_incr_decr_document_search.{format_}',
                       'w') as ofile:
                 if format_ == 'html':
@@ -592,7 +584,7 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                 else:
                     ofile.write(output.prettify())
     else:
-        with open('document_search/' +
+        with open(f'{path}/document_search/' +
                   f'{prefix}_document_search.{format_}',
                   'w') as ofile:
             if format_ == 'html':

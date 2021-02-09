@@ -1,6 +1,6 @@
 import pytest
 import re, sys
-sys.path.append("..")#"/Users/luidu652/Documents/causality_extraction/")
+sys.path.append("/Users/luidu652/Documents/causality_extraction/")
 import os
 from whoosh import index, query, fields, analysis
 from whoosh.util.testing import TempIndex
@@ -141,3 +141,43 @@ def test_create_index():
         'Section segmentation is different from previous version!' +\
         f'should be 128 but the index now counts {ix.doc_count()}!'
     os.system(f'rm -r {ix_path}')
+
+
+def test_format_simple_query():
+    terms = ['medför//VB', 'tillväxt', 'växt//']
+    expected_out = Or([Term('target', term) for term in terms])
+    format_out = str(format_simple_query(terms))
+    assert str(expected_out) == format_out,\
+        f'abnormal output for simple query: {format_out}'
+
+
+def test_format_parsed_query():
+    field = 'parsed_target'
+    terms = ['medför//VB', 'tillväxt', 'växt//']
+
+    # regular
+    expected_out = Or([Regex(field, r'medför//VB'),
+                       Regex(field, r'tillväxt'),
+                       Regex(field, r'växt//')])
+    format_out = str(format_parsed_query(terms))
+    assert str(expected_out) == format_out,\
+        f'abnormal output for parsed query: {format_out}'
+    
+    # strict
+    expected_out = Or([Regex(field, r'^medför//VB'),
+                       Regex(field, r'^tillväxt//'),
+                       Regex(field, r'^växt//')])
+    format_out = str(format_parsed_query(terms, strict=True))
+    assert str(expected_out) == format_out,\
+        f'abnormal output for strict parsed query: {format_out}'
+
+
+def test_format_match():
+    m = ('<em>some string with <b>some</b> html-style <b>highlighting</b></em>',
+         {'doc_title': '<h1>Document 1</h1>', 'sec_title': 'The best section'})
+    expected_out = "<match match_nb='2' doc='Document 1'\
+ section='The best section'><em>some string with some\
+ html-style highlighting</em></match>"
+    match = format_match(m, 2)
+    assert expected_out == match,\
+        f'incorrectly formatted match: {match}'

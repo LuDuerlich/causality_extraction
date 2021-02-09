@@ -1,5 +1,5 @@
 import re, sys
-sys.path.append("..")#"/Users/luidu652/Documents/causality_extraction/")
+sys.path.append("/Users/luidu652/Documents/causality_extraction/")
 from data_extraction import *
 
 def test_hierarchy_heuristics():
