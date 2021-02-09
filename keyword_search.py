@@ -10,7 +10,9 @@ import tarfile
 import re
 import sys
 # sys.path.append("/Users/luidu652/Documents/causality_extraction/")
-from search_terms import search_terms, expanded_dict, incr_dict, decr_dict
+from search_terms import search_terms, expanded_dict,\
+    incr_dict, decr_dict,\
+    keys_to_pos
 # sys.path.append("/Users/luidu652/Documents/causality_extraction/whoosh/src/")
 # from whoosh.analysis import SpaceSeparatedTokenizer
 from util import find_nearest_neighbour
@@ -405,7 +407,9 @@ def format_match(match, match_nb, org_num=None, format_='xml'):
 
 def format_parsed_query(term_list, strict=False):
     if strict:
-        return Or([Regex('parsed_target', fr"^{t}//") for t in term_list])
+        return Or([Regex('parsed_target', fr"^{t}//") if '//' not in t
+                   else Regex('parsed_target', fr"^{t}")
+                   for t in term_list])
     return Or([Regex('parsed_target', fr"{t}") for t in term_list])
 
 
@@ -632,6 +636,9 @@ if __name__ == "__main__":
     query_list = [wf for term in expanded_dict.values() for wf in term]
     decr_terms = [wf for term in {**decr_dict, **incr_dict}.values()
                   for wf in term]
+    decr_terms_pos = [f'{wf}//{keys_to_pos[key]}' for key, term
+                      in {**decr_dict, **incr_dict}.items()
+                      for wf in term]
     ix = index.open_dir('parsed_schema_document_ix', indexname='test')
     years = ['1995', '1997', '1998', '2001', '2004', '2007', '2010',
              '2013', '2016', '2019']
@@ -652,13 +659,20 @@ if __name__ == "__main__":
         #                               year=years[i], format_=format_,
         #                               additional_terms=[decr_terms],
         #                               field='target')
+        # secs, matches = query_document(ix, id_, keywords=query_list,
+        #                                year=years[i], format_=format_,
+        #                                additional_terms=[decr_terms] + [topics],
+        #                                #[term for topic in topics for term in topic]],
+        #                                field='target', query_expansion=True, exp_factor=10,
+        #                                prefix='parsed_ix_')
+
         secs, matches = query_document(ix, id_, keywords=query_list,
                                        year=years[i], format_=format_,
-                                       additional_terms=[decr_terms] + [topics],
+                                       additional_terms=[decr_terms_pos],
                                        #[term for topic in topics for term in topic]],
-                                       field='target', query_expansion=True, exp_factor=10,
-                                       prefix='parsed_ix_')
-        
+                                       field='target',
+                                       prefix='parsed_ix_pos_')
+
         print(secs, matches)
         sec_counter += secs
         match_counter += matches
