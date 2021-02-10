@@ -60,10 +60,10 @@ def find_nearest_neighbour(sent, n=None, token=None):
         # print(f"{token}: {neighbors}")
     else:
         similarity, neighbor_ids = nn_model.kneighbors([word_embeddings[id_] for id_ in tok_id], n_neighbors=n+3)
-        neighbors = list(OrderedDict.fromkeys([tokenizer.convert_ids_to_tokens(id_) for id_ in neighbor_ids]))[:n]
+        neighbors = [list(OrderedDict.fromkeys(tokenizer.convert_ids_to_tokens(ids))) for ids in neighbor_ids]
         # for i, t in enumerate(tokens):
             # print(f"{t}: {neighbors[i]}")
-    return list(zip(*neighbors, *similarity))
+    return list(zip(*neighbors, *similarity))[:n]
 
 
 def get_token_id(sentence, token, show_tokens=False):
