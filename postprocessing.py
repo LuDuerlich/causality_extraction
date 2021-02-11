@@ -856,7 +856,7 @@ topics = [['arbetslöshet', 'arbetslösheten', 'Arbetslösheten', 'arbetslöshet
           ['missbruk', 'missbruket', '##missbruk', '##issbruk', 'missbrukare', 'knark', 'narkoman', 'narkomaner', 'alkoholm', '##issbrukare'],
           ['hälsa', 'Hälsa', 'hälsar', 'hälsade', 'hälsan', 'hälsas', 'hälsotillstånd', 'hälso', 'ohälsa', 'Hälso']]
 # remove wordpiece segmentation characters
-topics = [[term.lstrip('##') for term in topic]for topic in topics]
+topics = [[term.replace('##', '\\B') for term in topic] for topic in topics]
 topics = [['arbetslöshet', 'långtidsarbetslöshet', 'massarbetslöshet', 'arbetslöshet.', 'Arbetslöshet', 'arbetslösheten', 'ungdomsarbetslöshet', 'strukturarbetslöshet', 'Massarbetslöshet', 'deltidsarbetslöshet'],
           ['tillväxt', 'BNPtillväxt', 'tillväxt.', 'jobbtillväxt', 'tillväxtökning', 'sysselsättningstillväxt', 'produktivitetstillväxt', 'tillväxten', 'produktionstillväxt', 'företagstillväxt'],
           ['klimat', 'klimat.', 'klimatet', 'sommarklimat', 'lokalklimat', 'vinterklimat', 'uteklimat', 'idéklimat', 'klimatOm', 'kontinentalklimat'],
@@ -902,9 +902,10 @@ if __name__ == '__main__':
         if BERT_neighbors is None:
             BERT_neighbors = {}
         for term in terms:
-            term = term[0]
+            if type(term) == list:
+                term = term[0]
             if term not in BERT_neighbors:
-                BERT_neighbors[term] = find_nearest_neighbour(term, max_n)[0]
+                BERT_neighbors[term] = find_nearest_neighbour(term, max_n)
             topics.append(BERT_neighbors[term][:i])
         print(topics[0])
         # prefix = f'expanded_BERT_{i}_'
