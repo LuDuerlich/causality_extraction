@@ -1,3 +1,4 @@
+import datetime
 from data_extraction import Text
 from bs4 import BeautifulSoup
 import bs4.element
@@ -19,7 +20,7 @@ from search_terms import search_terms, expanded_dict,\
 # from whoosh.analysis import SpaceSeparatedTokenizer
 from util import find_nearest_neighbour
 from whoosh.fields import Schema, TEXT, KEYWORD, ID, STORED,\
-    NUMERIC, FieldType
+    NUMERIC, DATETIME
 from whoosh.qparser import QueryParser, RegexPlugin
 from whoosh.query import Regex, Or, And, Term, Phrase
 # from whoosh.highlight import *
@@ -35,10 +36,14 @@ logging.basicConfig(filename="keyword_search.log",
                     level=logging.INFO
                     )
 
+with open('ids_to_date.pickle', 'rb') as ifile:
+    ids_to_date = pickle.load(ifile)
+
 path = os.path.dirname(os.path.realpath('__file__'))
 analyzer = StandardAnalyzer(stoplist=[])
 schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer,
                                lang='se'),
+                date=DATETIME(sortable=True),
                 sec_title=TEXT(stored=True, analyzer=analyzer,
                                lang='se'),
                 target=TEXT(stored=True, phrase=True,
@@ -167,10 +172,13 @@ def create_index(path_=f"{path}/test_index/", ixname="test", random_files=False,
                     right_ctxt = re.sub(r'\s+', ' ', "###".join(right_ctxt))
                     left_ctxt = re.sub(r'\s+', ' ', "###".join(left_ctxt))
 
+                    # add date
+                    date = datetime.datetime.fromisoformat(ids_to_date[key][0][1])
                     if parse:
                         parsed_target = " ".join(['//'.join([token.text, token.tag_, token.dep_])
                                   for token in model(target)])
                         writer.add_document(doc_title=key,
+                                            date=date,
                                             sec_title=title,
                                             left_context=left_ctxt,
                                             right_context=right_ctxt,
@@ -180,6 +188,7 @@ def create_index(path_=f"{path}/test_index/", ixname="test", random_files=False,
 
                     else:
                         writer.add_document(doc_title=key,
+                                            date=date,
                                             sec_title=title,
                                             left_context=left_ctxt,
                                             right_context=right_ctxt,
