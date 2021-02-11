@@ -53,11 +53,18 @@ def expand(term_list=annotated_search_terms, dictionary=None):
             else:
                 forms = requests.get(f"https://skrutten.csc.kth.se/granskaapi/inflect.php?word={words[i]}&tag={pos}")
                 if forms:
-                    forms = re.sub("((&lt;)+[a-z.*]*(&gt;)+|<br>|\d+)", "", forms.text.strip())
-                    forms = [el.split()[0].strip() for el in forms.split("\n")[1:]
-                             if el.split() and not el.startswith("all forms")]
+                    wforms = []
+                    for form in forms.text.split('<br>'):
+                        form = form.strip()
+                        if f'&lt;{pos}' in form and not form.startswith("all forms"):
+                            wforms.append(form.split('&lt;')[0].strip())
+                        # else:
+                        #    print('no:', form)
+                    #forms = re.sub("((&lt;)+[a-z.*]*(&gt;)+|<br>|\d+)", "", forms.text.strip())
+                    #forms = [el.split()[0].strip() for el in forms.split("\n")[1:]
+                             #if el.split() and not el.startswith("all forms")]
                     dictionary[words[i]] = forms
-                    for form in set(forms):
+                    for form in set(wforms):
                         if len(words) > 1:
                             terms[term].add(f'"{" ".join(words[:i] + [form] + words[min(i+1, len(words)-1):])}"')
                         else:
@@ -65,6 +72,19 @@ def expand(term_list=annotated_search_terms, dictionary=None):
         else:
             terms[term].add(term)
     return terms
+
+def create_tagged_term_list(term_dict, term_annotations):
+    """
+    returns a list of all terms in term dict and their pos information
+    in the style of the parsed_target field in the index schema
+    """
+    tagged_list = []
+    for term, _, pos in term_annotations:
+        if '"' in term:
+            tagged_list.extend(term_dict[term])
+        else:
+            tagged_list.extend([f'{form}//{pos}' for form in term_dict[term]])
+    return tagged_list
 
 expanded_dict = {'"bero på"': {'"berodd på"', '"beror på"', '"berodds på"', '"beros på"', '"berodda på"',
                                '"berott på"', '"berotts på"', '"beroddes på"', '"berodde på"', '"bero på"'},
@@ -96,9 +116,86 @@ expanded_dict = {'"bero på"': {'"berodd på"', '"beror på"', '"berodds på"', 
                                'framkallad', 'framkalla', 'framkallar', 'framkallande'},
                  'vålla': {'vållats', 'vållad', 'vållat', 'vållades', 'vållas', 'vållande', 'vållar', 'vållade',
                            'vålla', 'vållads'}}
+
+# restricted based on pos (maybe it is wise to keep the old list for now)
+new_expanded_dict = {'"bero på"': {'"beror på"', '"berodde på"', '"bero på"',
+                                   '"berott på"', '"beros på"', '"beroddes på"',
+                                   '"berotts på"'},
+                     '"bidra till"': {'"bidrar till"', '"bidras till"', '"bidrog till"',
+                                      '"bidra till"', '"bidragits till"',
+                                      '"bidrogs till"', '"bidragit till"'},
+                     '"leda till"': {'"leder till"', '"ledar till"', '"ledde till"',
+                                     '"ledades till"', '"lett till"', '"ledes till"',
+                                     '"ledas till"', '"leda till"', '"letts till"',
+                                     '"ledade till"', '"ledats till"', '"ledat till"',
+                                     '"leddes till"', '"led till"'},
+                     '"på grund av"': {'"på grunderna av"', '"på grunder av"',
+                                       '"på grundernas av"', '"på grundets av"',
+                                       '"på grund av"', '"på grunds av"', '"på grunders av"',
+                                       '"på grunden av"', '"på grundens av"', '"på grundet av"'},
+                     '"till följd av"': {'"till följd av"', '"till följders av"', '"till följder av"',
+                                         '"till följds av"', '"till följden av"', '"till följdernas av"',
+                                         '"till följdens av"', '"till följderna av"'},
+                     '"vara ett resultat av"': {'"vore ett resultat av"', '"varit ett resultat av"',
+                                                '"är ett resultat av"', '"vara ett resultat av"',
+                                                '"var ett resultat av"'},
+                     'resultera': {'resulterats', 'resultera', 'resulteras',
+                                   'resulterat', 'resulterade', 'resulterar', 'resulterades'},
+                     'förorsaka': {'förorsakade', 'förorsakas', 'förorsakar', 'förorsaka',
+                                   'förorsakat', 'förorsakades', 'förorsakats'},
+                     'orsaka': {'orsakas', 'orsakat', 'orsakar', 'orsakades',
+                                'orsakade', 'orsaka', 'orsakats'},
+                     'påverka': {'påverkades', 'påverkats', 'påverkas', 'påverka',
+                                 'påverkat', 'påverkade', 'påverkar'},
+                     'medföra': {'medfört', 'medför', 'medföras', 'medförde',
+                                 'medförts', 'medföres', 'medföra', 'medfördes'},
+                     'framkalla': {'framkallas', 'framkalla', 'framkallat',
+                                   'framkallades', 'framkallar', 'framkallade', 'framkallats'},
+                     'vålla': {'vållade', 'vållades', 'vållats', 'vålla', 'vållar', 'vållat', 'vållas'}}
+
+# filter out unlikely phrases
+# removed: '"på grunderna av"', '"på grundernas av"',
+# '"på grundets av"', '"på grunders av"',  '"på grundens av"',
+# '"på grundet av"', '"till följders av"', '"till följdens av"',
+# '"till följdernas av"', '"till följds av"',
+
+# to add:
+# var resultatet av, var resultaten av
+filtered_expanded_dict = {'"bero på"': {'"beror på"', '"berodde på"', '"bero på"',
+                                   '"berott på"', '"beros på"', '"beroddes på"',
+                                   '"berotts på"'},
+                     '"bidra till"': {'"bidrar till"', '"bidras till"', '"bidrog till"',
+                                      '"bidra till"', '"bidragits till"',
+                                      '"bidrogs till"', '"bidragit till"'},
+                     '"leda till"': {'"leder till"', '"ledar till"', '"ledde till"',
+                                     '"ledades till"', '"lett till"', '"ledes till"',
+                                     '"ledas till"', '"leda till"', '"letts till"',
+                                     '"ledade till"', '"ledats till"', '"ledat till"',
+                                     '"leddes till"', '"led till"'},
+                     '"på grund av"': {'"på grunder av"', '"på grund av"', '"på grunds av"',
+                                       '"på grunden av"'},
+                     '"till följd av"': {'"till följd av"', '"till följder av"',
+                                         '"till följden av"', '"till följderna av"'},
+                     '"vara ett resultat av"': {'"vore ett resultat av"', '"varit ett resultat av"',
+                                                '"är ett resultat av"', '"vara ett resultat av"',
+                                                '"var ett resultat av"'},
+                     'resultera': {'resulterats', 'resultera', 'resulteras',
+                                   'resulterat', 'resulterade', 'resulterar', 'resulterades'},
+                     'förorsaka': {'förorsakade', 'förorsakas', 'förorsakar', 'förorsaka',
+                                   'förorsakat', 'förorsakades', 'förorsakats'},
+                     'orsaka': {'orsakas', 'orsakat', 'orsakar', 'orsakades',
+                                'orsakade', 'orsaka', 'orsakats'},
+                     'påverka': {'påverkades', 'påverkats', 'påverkas', 'påverka',
+                                 'påverkat', 'påverkade', 'påverkar'},
+                     'medföra': {'medfört', 'medför', 'medföras', 'medförde',
+                                 'medförts', 'medföres', 'medföra', 'medfördes'},
+                     'framkalla': {'framkallas', 'framkalla', 'framkallat',
+                                   'framkallades', 'framkallar', 'framkallade', 'framkallats'},
+                     'vålla': {'vållade', 'vållades', 'vållats', 'vålla', 'vållar', 'vållat', 'vållas'}}
+
 # öka tillta, minska avta växa?, ökning tillväxt höjning, minskning nedgång reducering avtagande
 # wonder if there is a preference for POS
-# new_terms = ['minska', 'minskad', 'minskade', 'minskades', 'minskads', 'minskande', 'minskar', 'minskas', 'minskat', 'minskats', 'minskning', 'minskningar', 'minskningarna', 'minskningarnas', 'minskningars', 'minskningen', 'minskningens', 'öka', 'ökad', 'ökade', 'ökades', 'ökads', 'ökande', 'ökar', 'ökas', 'ökat', 'ökats', 'ökning', 'ökningar', 'ökningarna', 'ökningarnas', 'ökningars', 'ökningen', 'ökningens']
+
 increase_terms = ['öka', 'tillta',  'växa', 'ökning', 'uppgång', 'tilltagande', 'höjning']
 annotated_increase_terms = [('öka', 0, 'vb'),
                             ('tillta', 0, 'vb'),
@@ -107,15 +204,13 @@ annotated_increase_terms = [('öka', 0, 'vb'),
                             ('uppgång', 0, 'nn'),
                             ('tilltagande', 0, 'nn'),
                             ('höjning', 0, 'nn')]
-incr_dict = {'öka': {'ökat', 'ökad', 'ökads', 'ökades', 'ökade', 'öka', 'ökar', 'ökande', 'ökas', 'ökats'},
-             'tillta': {'tilltog', 'tilltaget', 'tilltas', 'tilltogs', 'tilltar', 'tillta', 'tilltagit',
-                        'tilltagen', 'tilltagens', 'tilltagna', 'tilltagits', 'tilltagne'},
-             'växa': {'växas', 'växta', 'vuxet', 'vuxens', 'växande', 'vuxen', 'vuxit', 'vuxne', 'vuxna',
-                      'växa', 'växs', 'växts', 'växtes', 'växer', 'växt', 'väx', 'vuxits', 'växte'},
-             'ökning': {'ökningarnas', 'ökningarna', 'ökningars', 'ökningar', 'ökningen', 'ökningens', 'ökning'},
-             'uppgång': {'uppgången', 'uppgångars', 'uppgång', 'uppgångarnas', 'uppgångarna', 'uppgångens', 'uppgångar'},
+incr_dict = {'öka': {'ökades', 'ökats', 'ökar', 'ökade', 'öka', 'ökat', 'ökas'},
+             'tillta': {'tilltogs', 'tilltagit', 'tillta', 'tilltas', 'tilltog', 'tilltagits', 'tilltar'},
+             'växa': {'växa', 'växs', 'växer', 'växte', 'vuxit', 'väx', 'vuxits', 'växtes', 'växas', 'växts', 'växt'},
+             'ökning': {'ökningarna', 'ökningen', 'ökningens', 'ökningars', 'ökning', 'ökningarnas', 'ökningar'},
+             'uppgång': {'uppgångarnas', 'uppgången', 'uppgångarna', 'uppgångens', 'uppgångar', 'uppgångars', 'uppgång'},
              'tilltagande': {'tilltagande', 'tilltagandet', 'tilltagandes',  'tilltagandets'},
-             'höjning': {'höjningen', 'höjning', 'höjningens', 'höjningar', 'höjningarnas', 'höjningars', 'höjningarna'}}
+             'höjning': {'höjningar', 'höjningens', 'höjningars', 'höjningarna', 'höjning', 'höjningen', 'höjningarnas'}}
 
 decrease_terms = ['minska', 'avta','minskning', 'nedgång', 'avtagande', 'sänkning']
 annotated_decrease_terms = [('minska', 0, 'vb'),
@@ -124,12 +219,24 @@ annotated_decrease_terms = [('minska', 0, 'vb'),
                             ('nedgång', 0, 'nn'),
                             ('avtagande', 0, 'nn'),
                             ('sänkning', 0, 'nn')]
-decr_dict = {'minska': {'minskads', 'minskade', 'minskat', 'minskas', 'minskad', 'minskar', 'minska', 'minskats',
-                        'minskades', 'minskande'},
-             'avta': {'avtagande', 'avtagne', 'avtagits', 'avtagit', 'avtaget', 'avta', 'avtogs', 'avtog', 'avtagens',
-                      'avtagna', 'avtagen', 'avtas', 'avtar'},
-             'minskning': {'minskningarna', 'minskning', 'minskningar', 'minskningen', 'minskningars', 'minskningarnas',
-                           'minskningens'},
-             'nedgång': {'nedgångarnas', 'nedgång', 'nedgångars', 'nedgångar', 'nedgångarna', 'nedgången', 'nedgångens'},
-             'avtagande': {'avtagande', 'avtagandet', 'avtagandes', 'avtagandets'},
-             'sänkning': {'sänkningens', 'sänkningen', 'sänkning', 'sänkningarnas', 'sänkningars', 'sänkningarna', 'sänkningar'}}
+decr_dict = {'minska': {'minskade', 'minskar', 'minska', 'minskas', 'minskat', 'minskats', 'minskades'},
+             'avta': {'avtogs', 'avtas', 'avtar', 'avtog', 'avta', 'avtagits', 'avtagit'},
+             'minskning': {'minskningar', 'minskningars', 'minskningen', 'minskning', 'minskningarna', 'minskningens', 'minskningarnas'},
+             'nedgång': {'nedgången', 'nedgångarnas', 'nedgångarna', 'nedgångars', 'nedgångens', 'nedgångar', 'nedgång'},
+             'avtagande':  {'avtagande', 'avtagandet', 'avtagandes', 'avtagandets'},
+             'sänkning': {'sänkning', 'sänkningars', 'sänkningarnas', 'sänkningarna', 'sänkningen', 'sänkningar', 'sänkningens'}}
+
+
+keys_to_pos = {'minska': 'VB',
+                 'avta': 'VB',
+                 'minskning': 'NN',
+                 'nedgång': 'NN',
+                 'avtagande': 'NN',
+                 'sänkning': 'NN',
+                 'öka': 'VB',
+                 'tillta': 'VB',
+                 'växa': 'VB',
+                 'ökning': 'NN',
+                 'uppgång': 'NN',
+                 'tilltagande': 'NN',
+                 'höjning': 'NN'}

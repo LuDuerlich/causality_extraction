@@ -424,6 +424,19 @@ def format_simple_query(term_list):
     return Or([Term('target', term) for term in term_list])
 
 
+def format_keyword_queries(keywords, field):
+    terms = []
+    for keyword in keywords:
+        if '"' in keyword:
+            terms.append(Phrase(field, [keyword.strip('"')]))
+        elif '//' in keyword:
+            terms.append(And([format_parsed_query([keyword], True)[0],
+                              Term(field, keyword.split('//')[0])]))
+        else:
+            qp.parse(f'{field}:{keyword}')
+    return Or(terms)
+
+
 def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                    format_='xml', year='', additional_terms=[],
                    field=None, context_size=2, query_expansion=False,
@@ -477,7 +490,7 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
     text.from_html(f'documents/ft_{id_}.html')
     print(f'documents/ft_{id_}.html')
     matches_by_section = {}
-    _query = ' OR '.join(keywords)
+    _query = format_keyword_queries(keywords, field)
     prefix = f'{prefix}{id_}_{year}_'
     if query_expansion:
         prefix += 'extended_'
@@ -491,22 +504,27 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                 if query_expansion:
                     term_list_ = []
                     for term in term_list:
-                        term_list_.append(find_nearest_neighbour(term, exp_factor)[0])
-                    additional_terms[i] = term_list_
+                        term_list_.append([nn.replace('##', '\\B')
+                                           for nn, sim in
+                                           find_nearest_neighbour(term, exp_factor)])
+                    additional_terms[i].append(term_list_)
                     terms = Or([format_query(q) for q in term_list_])
                 else:
                     terms = format_query(term_list)
             else:
                 terms = format_query(term_list, strict=True)
-            _query = f"{terms} AND ({_query})"
+            if terms:
+                _query = And([terms, _query])
     with ix.searcher() as searcher:
-        query = qp.parse(
-            f'((doc_title:{id_}) AND ({_query}))')
-        # print(query)
+        query = And([qp.parse(f'doc_title:{id_}'), _query])#qp.parse(
+            #f'((doc_title:{id_}) AND ({_query}))')
+        logging.info(f'Query: {query}')
         res = searcher.search(query, terms=True, limit=None)
         if field == 'target':
             matches = []
-            print(len(res))
+            print('this', len(res))
+            # somehow we miss out on matches here
+            # could be that those are overlapping?
             for m in res:
                 # print(len(m), len(res), m['sec_title'])
                 hits = highlighter.highlight_hit(
@@ -526,7 +544,6 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                 matches_by_section[match[1]['sec_title']] = {}
             matches_by_section[match[1]['sec_title']][match[-1]] = \
                 format_match(match[:-1], i, format_=format_)
-
     if format_ == 'xml':
         parser = 'lxml'
     else:
@@ -607,7 +624,7 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
             else:
                 ofile.write(output.prettify())
     print(len(matches_by_section))
-    return len(text.section_titles), len(matches)
+    return len(text.section_titles), len(matches), additional_terms
 
 
 if __name__ == "__main__":
@@ -641,6 +658,8 @@ if __name__ == "__main__":
              'documents/ft_H4B391.html', 'documents/ft_H7B312.html']
     create_index('parsed_schema_document_ix', schema=schema, filenames=paths, parse=True)
     query_list = [wf for term in expanded_dict.values() for wf in term]
+    filtered_query_list = [wf for term in filtered_expanded_dict.values() for wf in term]
+    tagged_list = create_tagged_term_list(filtered_expanded_dict, annotated_search_terms)
     decr_terms = [wf for term in {**decr_dict, **incr_dict}.values()
                   for wf in term]
     decr_terms_pos = [f'{wf}//{keys_to_pos[key]}' for key, term
@@ -666,19 +685,26 @@ if __name__ == "__main__":
         #                               year=years[i], format_=format_,
         #                               additional_terms=[decr_terms],
         #                               field='target')
+        secs, matches, expanded_terms = query_document(ix, id_, keywords=tagged_list,
+                                       year=years[i], format_=format_,
+                                       additional_terms=[[]] + [list(topics)],
+                                       #[term for topic in topics for term in topic]],
+                                       field='target', query_expansion=True, exp_factor=20,
+                                       prefix='pos_filtered_topics_only_')
+
+        # secs, matches, expanded_terms = query_document(ix, id_, keywords=query_list,
+        #                                year=years[i], format_=format_,
+        #                                additional_terms=[[]] + [list(topics)],
+        #                                #[term for topic in topics for term in topic]],
+        #                                field='target', query_expansion=True, exp_factor=20,
+        #                                prefix='topics_only_')
+
         # secs, matches = query_document(ix, id_, keywords=query_list,
         #                                year=years[i], format_=format_,
-        #                                additional_terms=[decr_terms] + [topics],
+        #                                additional_terms=[decr_terms_pos],
         #                                #[term for topic in topics for term in topic]],
-        #                                field='target', query_expansion=True, exp_factor=10,
-        #                                prefix='parsed_ix_')
-
-        secs, matches = query_document(ix, id_, keywords=query_list,
-                                       year=years[i], format_=format_,
-                                       additional_terms=[decr_terms_pos],
-                                       #[term for topic in topics for term in topic]],
-                                       field='target',
-                                       prefix='parsed_ix_pos_')
+        #                                field='target',
+        #                                prefix='parsed_ix_pos_')
 
         print(secs, matches)
         sec_counter += secs

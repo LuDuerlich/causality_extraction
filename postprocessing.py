@@ -633,7 +633,7 @@ def format_pilot_study(files, topics, search_context=True, prefix=""):
     margin-right: 13%;
     margin-left: 13%;
     }""")
-
+    topics = [[term.replace('##', '\\B') for term in topic] for topic in topics]
     for i, topic in enumerate(topics):
         style.append(f'.{remove_accent_chars(topic[0])}' +
                      ' { background-color:' + colors[i] + ';}')
@@ -767,8 +767,84 @@ def highlight_additions(filename, old_file, output, class_only=True):
 
 
 # files = glob.glob('incr_decr_docs/*.html')
+BERT_neighbors = {'hälsa': [('hälsa', 0.0), ('Hälsa', 0.37756878),
+                            ('hälsar', 0.47435445), ('hälsade', 0.4799701),
+                            ('hälsan', 0.48897803), ('hälsas', 0.6012217),
+                            ('hälsotillstånd', 0.63329464),
+                            ('hälso', 0.6602299), ('ohälsa', 0.67878914),
+                            ('Hälso', 0.6915869), ('##häls', 0.6926912),
+                            ('##älsa', 0.71705574), ('hälsovård', 0.72128063),
+                            ('välbefinnande', 0.72171354),
+                            ('folkhäls', 0.73417914), ('välkomna', 0.74378276),
+                            ('hälsning', 0.7548151), ('hälsot', 0.7667723),
+                            ('##shäls', 0.76739454), ('hälsok', 0.76976)],
+                  'tillväxt': [('tillväxt', 0.0), ('tillväxten', 0.28048193),
+                               ('expansion', 0.52488095), ('##växt', 0.55630785),
+                               ('tillväx', 0.5663575), ('##växten', 0.5789602),
+                               ('växa', 0.5883035), ('expansionen', 0.613449),
+                               ('växte', 0.6244403), ('växande', 0.6280979),
+                               ('växer', 0.6345276), ('ökning', 0.63854784),
+                               ('utveckling', 0.6401801), ('utvecklings', 0.6425348),
+                               ('##växande', 0.6512682), ('tillbakagång', 0.6517607),
+                               ('Ökningen', 0.6528701), ('Utveckling', 0.65303063),
+                               ('expansiva', 0.6592035), ('ökningen', 0.6641777)],
+                  'klimat': [('klimat', 0.0), ('klimatet', 0.30628943),
+                             ('Klimat', 0.36340815), ('##klimat', 0.4992742),
+                             ('Klimatet', 0.5150599), ('##sklimat', 0.60756314),
+                             ('miljö', 0.6209361), ('växthus', 0.6220983),
+                             ('##limat', 0.65388376), ('temperatur', 0.6637261),
+                             ('Miljö', 0.66544074), ('miljöm', 0.66620857),
+                             ('ekosystem', 0.6713495), ('miljön', 0.68185645),
+                             ('atmosfär', 0.68212783), ('köld', 0.69251716),
+                             ('väder', 0.6926243), ('miljök', 0.7020524),
+                             ('Miljön', 0.7155703), ('varmare', 0.7163896)],
+                  'arbetslöshet': [('arbetslöshet', 0.0),
+                                   ('arbetslösheten', 0.27266407),
+                                   ('Arbetslösheten', 0.3562233),
+                                   ('arbetslöshets', 0.42983437),
+                                   ('arbetslösa', 0.46224487),
+                                   ('arbetslös', 0.48992646),
+                                   ('sysselsättnings', 0.5397878),
+                                   ('Arbetsmarknad', 0.5528997),
+                                   ('arbetsmarknad', 0.5636917),
+                                   ('##slöshet', 0.5704941),
+                                   ('##slösheten', 0.5725473),
+                                   ('kriminalitet', 0.57470983),
+                                   ('arbetsmarknads', 0.58911556),
+                                   ('##ysselsättning', 0.59747416),
+                                   ('lågkonjunktur', 0.6005991),
+                                   ('strejker', 0.60614204),
+                                   ('inflationen', 0.607628),
+                                   ('inflation', 0.60891247),
+                                   ('brottslighet', 0.6115984),
+                                   ('fattigdomen', 0.6130494)],
+                  'missbruk': [('missbruk', 0.0), ('missbruket', 0.3884945),
+                               ('##missbruk', 0.4189924), ('##issbruk', 0.45375484),
+                               ('missbrukare', 0.5332813), ('knark', 0.6338639),
+                               ('narkoman', 0.63879), ('narkomaner', 0.6417084),
+                               ('alkoholm', 0.6523485), ('##issbrukare', 0.6625211),
+                               ('alkoholis', 0.6655246), ('överdos', 0.6657642),
+                               ('droger', 0.6692097), ('Alkohol', 0.66921556),
+                               ('narkotikam', 0.6759534), ('återfall', 0.6785668),
+                               ('användandet', 0.6790303), ('alkoholen', 0.6793245),
+                               ('prostitution', 0.6801337), ('utnyttjade', 0.68087363)]}
 terms = [['arbetslöshet'], ['tillväxt'],
          ['klimat'], ['missbruk'], ['hälsa']]
+prefix = 'parsed_filtered_BERT'
+max_n = 20
+BERT_neighbors = {}
+for term in terms:
+    if type(term) == list:
+        term = term[0]
+        if term not in BERT_neighbors:
+            BERT_neighbors[term] = find_nearest_neighbour(term, max_n)
+
+BERT_topics = [[neighbor for neighbor, similarity in BERT_neighbors[term[0]]]
+               for term in terms]
+format_pilot_study(glob.glob('document_search/parsed_experiments/parsed_ix_pos*'), BERT_topics, False, prefix=prefix)
+highlight_additions(f'{prefix}target_only_combined_topics.html',
+                                'target_only_combined_topics.html',
+                                f'document_search/{prefix}additions')
 topics = [['arbetslöshet', 'arbetslöshet', 'arbetslösheten', 'Arbetslösheten'],
           ['tillväxt', 'tillväxt', 'tillväxten', 'expansion'],
           ['klimat', 'klimat', 'klimatet', 'Klimat'],
