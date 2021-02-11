@@ -8,7 +8,7 @@ import bs4
 import logging
 from langdetect import detect_langs, lang_detect_exception
 
-path = os.path.dirname(os.path.realpath(__file__))
+path = os.path.dirname(os.path.realpath('__file__'))
 
 def hierarchy_heuristics(sections, debug=False, doc_title=None):
     section_titles = {}
@@ -211,11 +211,12 @@ class Text(object):
         current_section = Section()
         while current_el.next_element:
             if current_el.name == "h2":
+                current_text = re.sub('  +', ' ', current_el.text)
                 if current_section.title or current_section.text:
                     self.content.append(current_section)
-                    current_section = Section(current_el.text)
+                    current_section = Section(current_text)
                 else:
-                    current_section.title = current_el.text
+                    current_section.title = current_text
             if current_el.name == "p":
                 current_section.text.append(current_el.text)
             current_el = current_el.next_element

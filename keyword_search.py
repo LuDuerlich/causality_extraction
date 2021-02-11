@@ -4,6 +4,7 @@ import bs4.element
 import copy
 from custom_whoosh import *
 from html.entities import html5
+import logging
 import os
 from postprocessing import model, redefine_boundaries
 import tarfile
@@ -11,22 +12,30 @@ import re
 import sys
 # sys.path.append("/Users/luidu652/Documents/causality_extraction/")
 from search_terms import search_terms, expanded_dict,\
-    incr_dict, decr_dict,\
-    keys_to_pos
+    incr_dict, decr_dict, annotated_search_terms,\
+    keys_to_pos, filtered_expanded_dict,\
+    create_tagged_term_list
 # sys.path.append("/Users/luidu652/Documents/causality_extraction/whoosh/src/")
 # from whoosh.analysis import SpaceSeparatedTokenizer
 from util import find_nearest_neighbour
 from whoosh.fields import Schema, TEXT, KEYWORD, ID, STORED,\
     NUMERIC, FieldType
 from whoosh.qparser import QueryParser, RegexPlugin
-from whoosh.query import Regex, Or, And, Term
+from whoosh.query import Regex, Or, And, Term, Phrase
 # from whoosh.highlight import *
 from whoosh import index, query, analysis
 import random
 import glob
 import pickle
 
-path = os.path.dirname(os.path.realpath(__file__))
+
+logging.basicConfig(filename="keyword_search.log",
+                    filemode="w",
+                    # level=logging.DEBUG
+                    level=logging.INFO
+                    )
+
+path = os.path.dirname(os.path.realpath('__file__'))
 analyzer = StandardAnalyzer(stoplist=[])
 schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer,
                                lang='se'),
@@ -85,11 +94,13 @@ def create_index(path_=f"{path}/test_index/", ixname="test", random_files=False,
         ).casefold() != "y":
             ix = index.open_dir(path_, indexname=ixname)
         else:
+            logging.info(f'clearing out existing directory: {path_}')
             print(f"clearing out {path_} ...")
             os.system(f"rm -r {path_}*")
             ix = index.create_in(path_, schema, indexname=ixname)
     else:
         if not os.path.exists(path_):
+            logging.info(f'creating new directory {path_}')
             print(f'creating directory {path_} ...')
             os.system(f'mkdir {path_}')
         ix = index.create_in(path_, schema, indexname=ixname)
@@ -117,9 +128,11 @@ def create_index(path_=f"{path}/test_index/", ixname="test", random_files=False,
         files = ["H2B34", "H2B340", "H2B341", "H2B341", "H2B342",
                  "H2B343", "H2B344", "H2B345", "H2B346", "H2B347",
                  "H2B348", "H2B349", "H2B35"]
+    logging.info(f'creating index: {ixname}')
     with tarfile.open(f"{path}/documents.tar", "r") as ifile:
         n_files = len(files)
         print(f'{n_files} to be indexed')
+        logging.info(f'indexing {n_files} files')
         for i, key in enumerate(files):
             text = Text("")
             if key.endswith("html"):
@@ -175,6 +188,8 @@ def create_index(path_=f"{path}/test_index/", ixname="test", random_files=False,
 
             if i % 50 == 0:
                 print(f'at file {i} ({text.title, k}), it has {j+1} sections')
+                logging.info(f'at file {i} ({text.title, k}), it has {j+1} sections' +
+                             f'the index currently contains {ix.doc_count()} documents.')
     writer.commit()
 
 

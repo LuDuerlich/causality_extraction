@@ -28,7 +28,8 @@ def test_remove_accent_chars():
 def test_separate_query_terms():
     query_exp = 'beror på | resultera | bidrar till'
     soup = BeautifulSoup('<em>Det <b>beror</b> ofta <b>på</b> att beteendet \
-kan <b>resultera</b> i reaktioner som <b>bidrar</b> <b>till</b> negativa känslor.</em>')
+kan <b>resultera</b> i reaktioner som <b>bidrar</b> <b>till</b> negativa känslor.</em>',
+                         features='lxml')
     terms = separate_query_terms(soup('b'), query_exp)
     assert terms == [[' *beror', '(ofta)? *på'],
                      ['(kan)? *resultera'],
@@ -51,7 +52,7 @@ def test_search():
 Teknisk utveckling, konkurrens, förändrad efterfrågan och globalisering \
 påverkar inte strukturomvandlingen direkt, utan via de företag som finns \
 på marknaden.</match>'
-    match = BeautifulSoup(markup).match
+    match = BeautifulSoup(markup, features='lxml').match
     topics = [['klimat', 'miljö'], ['vård'],
               ['tillväxt', 'utveckling'], ['arbetslöshet']]
 
@@ -60,17 +61,17 @@ på marknaden.</match>'
     assert match['class'] == ['klimat', 'vård']
 
     # context search
-    match = BeautifulSoup(markup).match
+    match = BeautifulSoup(markup, features='lxml').match
     context_search(match, topics)
     assert match['class'] == ['klimat', 'vård', 'tillväxt', 'arbetslöshet']
 
 
-def test_format_match():
+def test_format_txt_match():
     sents = ['Första meningen.',
              'Det här är en mening!',
             'Det gäller att övertyga EU:s befolkning.',
             '(1) Ibland har SpaCy problem med parenteser.']
-    match = format_match(sents, [2], context=2, highlight_query=False)
+    match = format_txt_match(sents, [2], context=2, highlight_query=False)
     formatted_match = [{'left': ['Första meningen.', 'Det här är en mening!'],
                         'right': ['(1) Ibland har SpaCy problem med parenteser.'],
                         'match': 'Det gäller att övertyga EU:s befolkning.'}]

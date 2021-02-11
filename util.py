@@ -8,7 +8,7 @@ import re
 import torch
 import tensorflow
 
-path = os.path.dirname(os.path.realpath(__file__))
+path = os.path.dirname(os.path.realpath('__file__'))
 use_classic = True
 if use_classic:
     model_path = 'KB/bert-base-swedish-cased'

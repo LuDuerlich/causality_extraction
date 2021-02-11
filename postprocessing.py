@@ -1,5 +1,6 @@
 from bs4 import BeautifulSoup
 import fasttext
+import glob
 from spacy.tokens.span import Span
 from search_terms import expanded_dict
 import spacy
@@ -12,7 +13,7 @@ import regex
 import unicodedata
 from util import find_nearest_neighbour
 
-path = os.path.dirname(os.path.realpath(__file__))
+path = os.path.dirname(os.path.realpath('__file__'))
 
 def fix_file(filename):
     """replace magic characters in a markup file with entity characters"""
@@ -23,7 +24,8 @@ def fix_file(filename):
     if not os.path.exists(filename):
         filename = f'{path}/{filename}'
     with open(filename) as ifile:
-        soup = BeautifulSoup(ifile.read(), parser=markup)
+        soup = BeautifulSoup(ifile.read(), parser=markup,
+                             features='lxml')
     segments = filename.split('/')
     dir_, name = '/'.join(segments[:-1]), segments[-1]
     with open('/'.join([dir_, 'new_' + name]), 'w') as ofile:
@@ -137,7 +139,7 @@ def compare_segmentation(a, b, c=None, debug=False):
     return True
 
 
-def test_lms():
+def _test_lms():
     """compare the two Swedish language models"""
 
     # we are interested in the Swedish models
@@ -224,7 +226,7 @@ def segment_match(match, query, highlight_query=False, context=2,
                                 context, highlight_query,
                                 query_matches)
     else:
-        return format_match(sents, match_id,
+        return format_txt_match(sents, match_id,
                             context, highlight_query)
 
 
@@ -290,7 +292,7 @@ def format_xml_match(sents, match_id, context, highlight_query,
                      whether or not the query term(s) should be
                      highlighted within the matched sentence
     """
-    soup = BeautifulSoup()
+    soup = BeautifulSoup(features='lxml')
     new_matches = []
     if match_id:
         for id_ in match_id:
@@ -344,7 +346,7 @@ def format_xml_match(sents, match_id, context, highlight_query,
         return new_matches
 
 
-def format_match(sents, match_id, context, highlight_query):
+def format_txt_match(sents, match_id, context, highlight_query):
     """return match as match sentence and lists of left and
     right context sentences
     Parameters:
@@ -454,7 +456,7 @@ def format_output(queries, dest=None):
                       an opened file to write to (optional)
     """
 
-    new_matches = BeautifulSoup()
+    new_matches = BeautifulSoup(features='lxml')
     i = 0
     for query in queries:
         matches = query.find_all('match')
@@ -622,7 +624,7 @@ def format_pilot_study(files, topics, search_context=True, prefix=""):
                     sentence only, or the full context window
     """
     matches = BeautifulSoup('<html><head></head><body></body></html>',
-                            parser='html.parser')
+                            parser='html.parser', features='lxml')
     style = matches.new_tag('style')
     colors = ['lightblue', 'lightgreen', 'coral', 'gold', 'plum']
     style.append("""body {
@@ -646,7 +648,8 @@ def format_pilot_study(files, topics, search_context=True, prefix=""):
     last_section = None
     for file in files:
         with open(file) as ifile:
-            soup = BeautifulSoup(ifile.read(), parser='html.parser')
+            soup = BeautifulSoup(ifile.read(), parser='html.parser',
+                                 features='lxml')
             for match in soup.find_all('p'):
                 search_funct(match, topics)
                 if 'class' in match.attrs:
@@ -690,15 +693,18 @@ def highlight_additions(filename, old_file, output, class_only=True):
     with open(filename) as newfile,\
          open(old_file) as oldfile:
         soup = BeautifulSoup(newfile.read(),
-                             parser='html.parser')
+                             parser='html.parser',
+                             features='lxml')
         new_p = soup.find_all('p')
         if class_only:
             old_p = BeautifulSoup(oldfile.read(),
-                                  parser='html.parser').find_all(
+                                  parser='html.parser',
+                                  features='lxml').find_all(
                                       is_topic_match)
         else:
             old_p = BeautifulSoup(oldfile.read(),
-                                  parser='html.parser').find_all('p')
+                                  parser='html.parser',
+                                  features='lxml').find_all('p')
 
     additions = []
     counter = 0
@@ -719,7 +725,7 @@ def highlight_additions(filename, old_file, output, class_only=True):
             additions.append(new_paragraph)
     print(len(old_p), len(new_p), len(additions))
     matches = BeautifulSoup('<html><head></head><body></body></html>',
-                            parser='html.parser')
+                            parser='html.parser', features='lxml')
     style = matches.new_tag('style')
     colors = ['lightblue', 'lightgreen', 'coral', 'gold', 'plum']
     style.append("""body {
