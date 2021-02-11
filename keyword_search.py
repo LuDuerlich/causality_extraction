@@ -424,11 +424,11 @@ def format_simple_query(term_list):
     return Or([Term('target', term) for term in term_list])
 
 
-def format_keyword_queries(keywords, field):
+def format_keyword_queries(keywords, field, slop=1):
     terms = []
     for keyword in keywords:
         if '"' in keyword:
-            terms.append(Phrase(field, [keyword.strip('"')]))
+            terms.append(Phrase(field, keyword.strip('"').split(), slop=slop))
         elif '//' in keyword:
             terms.append(And([format_parsed_query([keyword], True)[0],
                               Term(field, keyword.split('//')[0])]))
@@ -440,7 +440,7 @@ def format_keyword_queries(keywords, field):
 def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                    format_='xml', year='', additional_terms=[],
                    field=None, context_size=2, query_expansion=False,
-                   exp_factor=3, prefix=""):
+                   exp_factor=3, prefix="", slop=1):
     """search for matches within one document
     Parameters:
                ix (FileIndex):
@@ -467,6 +467,17 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                   right. Note that if the schema has designated fields
                   for left and right context, the context size
                   specified upon index creation is the upper limit.
+               query_expansion (bool):
+                  whether the additional terms should be expanded using
+                  word embeddings
+               exp_factor (int):
+                  how many neighbours should be added during query
+                  expansion
+               prefix (str):
+                  prefix for the output file
+               slop (int):
+                  slop factor for phrase queries (i.e. how many tokens
+                  are allowed in between phrase constituents)
 
     """
     sentf = CustomSentenceFragmenter(maxchars=1000,
@@ -490,7 +501,7 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
     text.from_html(f'documents/ft_{id_}.html')
     print(f'documents/ft_{id_}.html')
     matches_by_section = {}
-    _query = format_keyword_queries(keywords, field)
+    _query = format_keyword_queries(keywords, field, slop)
     prefix = f'{prefix}{id_}_{year}_'
     if query_expansion:
         prefix += 'extended_'
@@ -516,21 +527,16 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
             if terms:
                 _query = And([terms, _query])
     with ix.searcher() as searcher:
-        query = And([qp.parse(f'doc_title:{id_}'), _query])#qp.parse(
-            #f'((doc_title:{id_}) AND ({_query}))')
+        query = And([qp.parse(f'doc_title:{id_}'), _query])
         logging.info(f'Query: {query}')
         res = searcher.search(query, terms=True, limit=None)
         if field == 'target':
             matches = []
             print('this', len(res))
-            # somehow we miss out on matches here
-            # could be that those are overlapping?
             for m in res:
-                # print(len(m), len(res), m['sec_title'])
                 hits = highlighter.highlight_hit(
                         m, "target", top=len(m.results),
                         strict_phrase='"' in _query)
-                # print(len(hits))
                 for hit, start_pos in hits:
                     matches.append((hit, m, m['sent_nb']))
         else:
@@ -670,7 +676,8 @@ if __name__ == "__main__":
              '2013', '2016', '2019']
     ids = ['GIB33', 'GKB3145d3', 'GLB394', 'GOB345d1', 'GRB350d3',
            'GVB386', 'GYB362', 'H1B314', 'H4B391', 'H7B312']
-    topics = ['arbetslöshet', 'tillväxt', 'klimat', 'missbruk', 'hälsa']
+    topics = ['arbetslöshet', 'klimat', 'missbruk', 'hälsa']
+    # topics = ['arbetslöshet', 'tillväxt', 'klimat', 'missbruk', 'hälsa']
     match_counter = 0
     sec_counter = 0
     format_ = 'html'
@@ -687,10 +694,11 @@ if __name__ == "__main__":
         #                               field='target')
         secs, matches, expanded_terms = query_document(ix, id_, keywords=tagged_list,
                                        year=years[i], format_=format_,
-                                       additional_terms=[[]] + [list(topics)],
+                                                       additional_terms=[[]] + [list(topics)],
                                        #[term for topic in topics for term in topic]],
                                        field='target', query_expansion=True, exp_factor=20,
-                                       prefix='pos_filtered_topics_only_')
+                                                       prefix='pos_filtered_topics_only_',
+                                                       slop=1)
 
         # secs, matches, expanded_terms = query_document(ix, id_, keywords=query_list,
         #                                year=years[i], format_=format_,
