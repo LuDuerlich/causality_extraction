@@ -134,12 +134,12 @@ def test_create_index():
     ix_path = '__test__index'
     if os.path.exists(ix_path):
         os.system(f'rm -r {ix_path}')
-    filenames = ['documents/ft_GTB366d4.html']
+    filenames = ['documents/ft_H1B352.html']
     create_index(path_=ix_path, filenames=filenames, ixname=None)
     ix = index.open_dir(ix_path)
-    assert ix.doc_count() == 128,\
+    assert ix.doc_count() == 23,\
         'Section segmentation is different from previous version!' +\
-        f'should be 128 but the index now counts {ix.doc_count()}!'
+        f'should be 23 but the index now counts {ix.doc_count()}!'
     os.system(f'rm -r {ix_path}')
 
 
