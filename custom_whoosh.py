@@ -1,6 +1,9 @@
 from whoosh.highlight import *
+from whoosh.analysis import StandardAnalyzer
+from whoosh.query import CompoundQuery
 
-def set_matched_filter_phrases(tokens, text, terms, phrases, analyzer):
+
+def set_matched_filter_phrases_(tokens, text, terms, phrases, analyzer):
     """
     Mark tokens to be highlighted as matched. Used for Strict Phrase highlighting.
     Phrase-aware: highlights only individual matches for individual query terms
@@ -17,7 +20,7 @@ def set_matched_filter_phrases(tokens, text, terms, phrases, analyzer):
     """
     Implementation note: Because the Token object follows a Singleton pattern,
     we can only read each one once. Because phrase matching requires rescanning,
-    we require a rendered token list (the text parameter) instead. The function must 
+    we require a rendered token list (the text parameter) instead. The function must
     still yield Token objects at the end, so the text list is used as a way to build a list
     of Token indices (the matches set). The yield loop at the end uses this
     to properly set .matched on the yielded Token objects.
@@ -83,7 +86,7 @@ def set_matched_filter_phrases(tokens, text, terms, phrases, analyzer):
                 break
 
     for i, t in enumerate(tokens):
-        t.matched = i in matches 
+        t.matched = i in matches
         yield t
 
 
@@ -225,15 +228,15 @@ class CustomHighlighter(Highlighter):
         else:
             # Retokenize the text
             analyzer = results.searcher.schema[fieldname].analyzer
-            # print("ANALYZER:", analyzer)
             tokens = analyzer(text, positions=True, chars=True, mode="index",
                               removestops=False)
 
             # Set Token.matched attribute for tokens that match a query term
             if strict_phrase:
-                terms, phrases = results.q.phrases()
-                tokens = set_matched_filter_phrases(tokens, text, terms,
-                                                    phrases, self.analyzer)
+                # terms, phrases = results.q.phrases()
+                terms, phrases = separate_query_terms(results.q, results)
+                tokens = set_matched_filter_phrases_(tokens, text, terms,
+                                                     phrases, self.analyzer)
             else:
                 tokens = set_matched_filter(tokens, words)
             tokens = self._merge_matched_tokens(tokens)
@@ -249,6 +252,42 @@ class CustomHighlighter(Highlighter):
                                   minscore=minscore)
         output = self.formatter.format(fragments)
         return output
+
+
+def separate_query_terms(query, results):
+    """
+    recursively find all query constituents and separate them into
+    terms or Regex and phrases.
+    """
+    from whoosh.query import Phrase, Term, Regex
+    terms = []
+    phrases = []
+    if isinstance(query, Term):
+        terms.append(query)
+    elif isinstance(query, Regex):
+        field = query.field()
+        terms.extend([Term(field, match) for match in
+                      [match.decode() for match in query._btexts(
+                          results.searcher.reader())]])
+
+    elif isinstance(query, Phrase):
+        phrases.append(query)
+    else:
+        for query in query.children():
+            if isinstance(query, Term):
+                terms.append(query)
+            elif isinstance(query, Regex):
+                field = query.field()
+                terms.extend([Term(field, match) for match in
+                              [match.decode() for match in query._btexts(
+                                  results.searcher.reader())]])
+            elif isinstance(query, Phrase):
+                phrases.append(query)
+            elif isinstance(query, CompoundQuery):
+                t, p = separate_query_terms(query, results)
+                phrases.extend(p)
+                terms.extend(t)
+    return terms, phrases
 
 
 class ContextFragment(Fragment):
@@ -284,11 +323,9 @@ class CustomFormatter(Formatter):
 
         text = fragment.text
         index = fragment.sent_boundaries[0]
-        # if not index:
-        #     print(fragment.sent_boundaries)
         match_s_end = fragment.sent_boundaries[-1]
         output = [self._text(text[fragment.startchar:index])]
-        output.append("<em>")
+        output.append("<b>")
         for t in fragment.matches:
             if t.startchar is None:
                 continue
@@ -299,7 +336,7 @@ class CustomFormatter(Formatter):
             output.append(self.format_token(text, t, replace))
             index = t.endchar
         output.append(self._text(text[index:match_s_end+1]))
-        output.append("</em>")
+        output.append("</b>")
         output.append(self._text(text[match_s_end+1:fragment.endchar+1]))
         # print('formatted:', "".join(output), fragment.sent_boundaries[0])
         return "".join(output), fragment.sent_boundaries[0]
@@ -314,7 +351,7 @@ class CustomFormatter(Formatter):
         return formatted
 
     def format_token(self, text, token, replace=False):
-        return f"<b>{get_text(text, token, replace)}</b>"
+        return f"<em>{get_text(text, token, replace)}</em>"
 
 
 def mksentfrag(text, tokens, startchar=None, endchar=None,
@@ -330,9 +367,6 @@ def mksentfrag(text, tokens, startchar=None, endchar=None,
     startchar = max(0, startchar - charsbefore)
     endchar = min(len(text), endchar + charsafter)
     f = ContextFragment(text, tokens, startchar, endchar, match_s_boundaries)
-    # print("FRAGMENT:", startchar, endchar,
-    # match_s_boundaries, len(text), tokens)
-    # print(text[startchar:endchar])
     return f
 
 
