@@ -52,6 +52,8 @@ if os.path.exists(sample_file):
     # string representations
     hits = [match.text for match in matches]
 model_path = f'{path}/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
+if not os.path.exists(model_path):
+    model_path = f'{path}/spacy_model/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
 model = spacy.load(model_path)
 sentencizer = model.create_pipe('sentencizer')
 model.add_pipe(sentencizer)
