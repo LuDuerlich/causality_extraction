@@ -9,6 +9,7 @@ import logging
 import os
 from postprocessing import model, redefine_boundaries
 import tarfile
+import traceback
 import re
 import sys
 # sys.path.append("/Users/luidu652/Documents/causality_extraction/")
@@ -29,12 +30,25 @@ import random
 import glob
 import pickle
 
+for handler in logging.root.handlers[:]:
+    logging.root.removeHandler(handler)
 
-logging.basicConfig(filename="keyword_search.log",
-                    filemode="w",
-                    # level=logging.DEBUG
-                    level=logging.INFO
-                    )
+logname = f'{datetime.datetime.now()}_keyword_search.log'
+def setup_log(name, logname):
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+
+    log_format = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    filename = f"./test_{name}.log"
+    log_handler = logging.FileHandler(filename)
+    log_handler.setLevel(logging.DEBUG)
+    log_handler.setFormatter(log_format)
+
+    logger.addHandler(log_handler)
+
+    return logger
+
+logger = setup_log('whoosh_logger', logname)
 
 with open('ids_to_date.pickle', 'rb') as ifile:
     ids_to_date = pickle.load(ifile)
@@ -99,17 +113,16 @@ def create_index(path_=f"{path}/test_index/", ixname="test", random_files=False,
         ).casefold() != "y":
             ix = index.open_dir(path_, indexname=ixname)
         else:
-            logging.info(f'clearing out existing directory: {path_}')
+            logger.info(f'clearing out existing directory: {path_}')
             print(f"clearing out {path_} ...")
             os.system(f"rm -r {path_}*")
             ix = index.create_in(path_, schema, indexname=ixname)
     else:
         if not os.path.exists(path_):
-            logging.info(f'creating new directory {path_}')
+            logger.info(f'creating new directory {path_}')
             print(f'creating directory {path_} ...')
             os.system(f'mkdir {path_}')
         ix = index.create_in(path_, schema, indexname=ixname)
-    writer = ix.writer()
     if random_files:
         with open(f"{path}/ix_files.pickle", "rb") as ifile:
             seen = pickle.load(ifile)
@@ -133,73 +146,99 @@ def create_index(path_=f"{path}/test_index/", ixname="test", random_files=False,
         files = ["H2B34", "H2B340", "H2B341", "H2B341", "H2B342",
                  "H2B343", "H2B344", "H2B345", "H2B346", "H2B347",
                  "H2B348", "H2B349", "H2B35"]
-    logging.info(f'creating index: {ixname}')
+    logger.info(f'creating index: {ixname}')
+    mem = 2096
+    writer = ix.writer(limitmb=mem/4, procs=4)
     with tarfile.open(f"{path}/documents.tar", "r") as ifile:
+         #ix.writer(limitmb=mem/4, procs=4) as writer:
+         # ix.writer(limitmb=mem/4, procs=4, multisegment=True) as writer:
+        logger.info(f'writing with {mem/4} if memory on 4 processes ({mem})')
         n_files = len(files)
         print(f'{n_files} to be indexed')
-        logging.info(f'indexing {n_files} files')
-        for i, key in enumerate(files):
-            text = Text("")
-            if key.endswith("html"):
-                text.from_html(ifile.extractfile(key).read())
-                key = key.split("_")[1].split(".")[0]
-            else:
-                text.from_html(
-                    ifile.extractfile(
-                        f"documents/s_{key}.html"
-                    ).read())
-            for j, section in enumerate(text):
-                document = model(" ".join(section.text))
-                sents = redefine_boundaries(document)
-                for k, sent in enumerate(sents):
-                    left_ctxt = ['']
-                    right_ctxt = ['']
-                    if k > 0:
-                        if n is None:
-                            left_ctxt = sents[:k]
-                        else:
-                            left_ctxt = sents[max(k-n, 0):k]
-                    if k + 1 < len(sents):
-                        if n is None:
-                            right_ctxt = sents[k+1:]
-                        else:
-                            right_ctxt = sents[k+1:min(len(sents), k+1+n)]
-                    target = str(sents[k])
-                    title = re.sub(r'\s+', ' ', section.title)
-                    # apparently, whoosh does not preserve newlines, so we have to
-                    # mark sentence boundaries another way
-
-                    right_ctxt = re.sub(r'\s+', ' ', "###".join(right_ctxt))
-                    left_ctxt = re.sub(r'\s+', ' ', "###".join(left_ctxt))
-
-                    # add date
-                    date = datetime.datetime.fromisoformat(ids_to_date[key][0][1])
-                    if parse:
-                        parsed_target = " ".join(['//'.join([token.text, token.tag_, token.dep_])
-                                  for token in model(target)])
-                        writer.add_document(doc_title=key,
-                                            date=date,
-                                            sec_title=title,
-                                            left_context=left_ctxt,
-                                            right_context=right_ctxt,
-                                            target=target,
-                                            parsed_target=parsed_target,
-                                            sent_nb=k)
-
+        logger.info(f'indexing {n_files} files')
+        try:
+            for i, key in enumerate(files):
+                text = Text("")
+                if key.endswith("html"):
+                    if os.path.exists(key):
+                        text.from_html(key)
                     else:
-                        writer.add_document(doc_title=key,
-                                            date=date,
-                                            sec_title=title,
-                                            left_context=left_ctxt,
-                                            right_context=right_ctxt,
-                                            target=target,
-                                            sent_nb=k)
+                        text.from_html(ifile.extractfile(key).read())
+                    key = key.split("_")[1].split(".")[0]
+                else:
+                    text.from_html(
+                        ifile.extractfile(
+                            f"documents/s_{key}.html"
+                        ).read())
+                for j, section in enumerate(text):
+                    document = model(" ".join(section.text))
+                    sents = redefine_boundaries(document)
+                    # parsed_sents = model(sents)
+                    for k, sent in enumerate(sents):
+                        left_ctxt = ['']
+                        right_ctxt = ['']
+                        if k > 0:
+                            if n is None:
+                                left_ctxt = sents[:k]
+                            else:
+                                left_ctxt = sents[max(k-n, 0):k]
+                        if k + 1 < len(sents):
+                            if n is None:
+                                right_ctxt = sents[k+1:]
+                            else:
+                                right_ctxt = sents[k+1:min(len(sents), k+1+n)]
+                        target = str(sents[k])
+                        title = re.sub(r'\s+', ' ', section.title)
+                        # apparently, whoosh does not preserve newlines, so we have
+                        # to mark sentence boundaries another way
 
-            if i % 50 == 0:
-                print(f'at file {i} ({text.title, k}), it has {j+1} sections')
-                logging.info(f'at file {i} ({text.title, k}), it has {j+1} sections' +
-                             f'the index currently contains {ix.doc_count()} documents.')
-    writer.commit()
+                        right_ctxt = re.sub(r'\s+', ' ', "###".join(right_ctxt))
+                        left_ctxt = re.sub(r'\s+', ' ', "###".join(left_ctxt))
+
+                        # add date
+                        if hasattr(datetime.datetime, 'fromisoformat'):
+                            date = datetime.datetime.fromisoformat(
+                                ids_to_date[key][0][1])
+                        else:
+                            year, month, day = ids_to_date[key][0][1].split('-')
+                            date = datetime.datetime(int(year), int(month), int(day))
+                        # To Do: parse all sentences in one go
+                        if parse:
+                            parsed_target = " ".join(['//'.join([token.text,
+                                                                 token.tag_,
+                                                                 token.dep_,
+                                                                 token.head.i])
+                                                      for token in model(target)])
+                            writer.add_document(doc_title=key,
+                                                date=date,
+                                                sec_title=title,
+                                                left_context=left_ctxt,
+                                                right_context=right_ctxt,
+                                                target=target,
+                                                parsed_target=parsed_target,
+                                                sent_nb=k)
+
+                        else:
+                            writer.add_document(doc_title=key,
+                                                date=date,
+                                                sec_title=title,
+                                                left_context=left_ctxt,
+                                                right_context=right_ctxt,
+                                                target=target,
+                                                sent_nb=k)
+
+                if i % 50 == 0:
+                    print(f'at file {i} ({text.title, k}), it has {j+1} sections')
+                    logging.info(f'at file {i} ({text.title, k}), it has {j+1} ' +
+                                 'sections the index currently contains ' +
+                                 f'{ix.doc_count()} documents.')
+        except:
+            traceback.print_exc()
+            print(f'stopped at file {i} {key}, {j} {section}')
+            writer.commit()
+            return
+        print('all done')
+        writer.commit()
 
 
 def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
@@ -537,7 +576,7 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                 _query = And([terms, _query])
     with ix.searcher() as searcher:
         query = And([qp.parse(f'doc_title:{id_}'), _query])
-        logging.info(f'Query: {query}')
+        logger.info(f'Query: {query}')
         res = searcher.search(query, terms=True, limit=None)
         if field == 'target':
             matches = []
