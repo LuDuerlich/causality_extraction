@@ -36,10 +36,10 @@ modelpath = f'{path}/nn_model.gzip'
 if os.path.exists(modelpath):
     with GzipFile(modelpath, 'rb') as ifile:
         nn_model = pickle.loads(ifile.read())
-elif False:#input('generate new nearest neighbor model? (y/n)\n>') == 'y':
+else:#input('generate new nearest neighbor model? (y/n)\n>') == 'y':
     nn_model = NearestNeighbors(n_neighbors=4, metric='cosine')
     nn_model.fit(word_embeddings)
-    with GzipFile(path, 'wb') as ofile:
+    with GzipFile(modelpath, 'wb') as ofile:
         ofile.write(pickle.dumps(nn_model))
 
 
