@@ -8,6 +8,7 @@ import logging
 import os
 from postprocessing import model, redefine_boundaries
 import tarfile
+import traceback
 import re
 # import sys
 # sys.path.append("/Users/luidu652/Documents/causality_extraction/")
@@ -28,13 +29,28 @@ import random
 # import glob
 import pickle
 
+for handler in logging.root.handlers[:]:
+    logging.root.removeHandler(handler)
 
-logging.basicConfig(format='%(asctime)s %(levelname)-8s %(message)s',
-                    filename="keyword_search.log",
-                    filemode="w",
-                    # level=logging.DEBUG
-                    level=logging.INFO
-                    )
+logname = f'{datetime.datetime.now()}_keyword_search.log'
+
+
+def setup_log(name, logname):
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+
+    log_format = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    filename = f"./test_{name}.log"
+    log_handler = logging.FileHandler(filename)
+    log_handler.setLevel(logging.DEBUG)
+    log_handler.setFormatter(log_format)
+
+    logger.addHandler(log_handler)
+
+    return logger
+
+logger = setup_log('whoosh_logger', logname)
+
 
 with open('ids_to_date.pickle', 'rb') as ifile:
     ids_to_date = pickle.load(ifile)
@@ -101,21 +117,16 @@ def create_index(path_=f"{path}/test_index/", ixname="test",
             print(f'opening exisitin index {path_}')
             ix = index.open_dir(path_, indexname=ixname)
         else:
-            logging.info(f'clearing out existing directory: {path_}')
+            logger.info(f'clearing out existing directory: {path_}')
             print(f"clearing out {path_} ...")
             os.system(f"rm -r {path_}*")
             ix = index.create_in(path_, schema, indexname=ixname)
     else:
         if not os.path.exists(path_):
-            logging.info(f'creating new directory {path_}')
+            logger.info(f'creating new directory {path_}')
             print(f'creating directory {path_} ...')
             os.system(f'mkdir {path_}')
         ix = index.create_in(path_, schema, indexname=ixname)
-    mem = 1048
-    writer = ix.writer(limitmb=mem/4, procs=4)  # , multisegment=True)
-    # ana = writer.schema['parsed_target'].format.analyzer
-    # ana.chachesize = -1
-    # ana.clear()
     if random_files:
         with open(f"{path}/ix_files.pickle", "rb") as ifile:
             seen = pickle.load(ifile)
@@ -139,11 +150,18 @@ def create_index(path_=f"{path}/test_index/", ixname="test",
         files = ["H2B34", "H2B340", "H2B341", "H2B341", "H2B342",
                  "H2B343", "H2B344", "H2B345", "H2B346", "H2B347",
                  "H2B348", "H2B349", "H2B35"]
-    logging.info(f'creating index: {ixname}')
+    logger.info(f'creating index: {ixname}')
+    mem = 2096
+    writer = ix.writer(limitmb=mem/4, procs=4)
     with tarfile.open(f"{path}/documents.tar", "r") as ifile:
+         #ix.writer(limitmb=mem/4, procs=4) as writer:
+         # ix.writer(limitmb=mem/4, procs=4, multisegment=True) as writer:
+        logger.info(f'writing with {mem/4} if memory on 4 processes ({mem})')
         n_files = len(files)
         print(f'{n_files} to be indexed')
-        logging.info(f'indexing {n_files} files')
+
+        logger.info(f'indexing {n_files} files')
+
         try:
             for i, key in enumerate(files):
                 text = Text("")
@@ -184,13 +202,19 @@ def create_index(path_=f"{path}/test_index/", ixname="test",
                         left_ctxt = re.sub(r'\s+', ' ', "###".join(left_ctxt))
 
                         # add date
-                        date = datetime.datetime.fromisoformat(
-                            ids_to_date[key][0][1])
+                        if hasattr(datetime.datetime, 'fromisoformat'):
+                            date = datetime.datetime.fromisoformat(
+                                ids_to_date[key][0][1])
+                        else:
+                            year, month, day = ids_to_date[key][0][1].split('-')
+                            date = datetime.datetime(int(year), int(month), int(day))
+
                         # To Do: parse all sentences in one go
                         if parse:
                             parsed_target = " ".join(['//'.join([token.text,
                                                                  token.tag_,
-                                                                 token.dep_])
+                                                                 token.dep_,
+                                                                 token.head.i])
                                                       for token in model(target)])
                             writer.add_document(doc_title=key,
                                                 date=date,
@@ -216,9 +240,13 @@ def create_index(path_=f"{path}/test_index/", ixname="test",
                                  'sections the index currently contains ' +
                                  f'{ix.doc_count()} documents.')
         except:
-            writer.commit()
+
+            traceback.print_exc()
             print(f'stopped at file {i} {key}, {j} {section}')
-    writer.commit()
+            writer.commit()
+            return
+        print('all done')
+        writer.commit()
 
 
 def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
@@ -566,7 +594,7 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                 _query = And([terms, _query])
     with ix.searcher() as searcher:
         query = And([qp.parse(f'doc_title:{id_}'), _query])
-        logging.info(f'Query: {query}')
+        logger.info(f'Query: {query}')
         res = searcher.search(query, terms=True, limit=None)
         if field == 'target':
             matches = []

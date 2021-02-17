@@ -15,6 +15,8 @@ from util import find_nearest_neighbour
 
 path = os.path.dirname(os.path.realpath('__file__'))
 
+if not path.startswith('/'):
+    path = '/' + path
 
 def fix_file(filename):
     """replace magic characters in a markup file with entity characters"""
@@ -39,16 +41,17 @@ def fix_file(filename):
 def remove_accent_chars(x: str):
     return regex.sub(r'\p{Mn}', '', unicodedata.normalize('NFKD', x))
 
+sample_file = f"{path}/samples/hit_samplereconstructed.xml"
+if os.path.exists(sample_file):
+    with open(sample_file) as ifile:
+        mark_up = BeautifulSoup(ifile.read(), features='lxml')
+    # markup
+    matches = mark_up.find_all('match')
+    queries = mark_up.find_all('query')
 
-with open(f"{path}/samples/hit_samplereconstructed.xml") as ifile:
-    mark_up = BeautifulSoup(ifile.read(), features='lxml')
-# markup
-matches = mark_up.find_all('match')
-queries = mark_up.find_all('query')
-
-# string representations
-hits = [match.text for match in matches]
-model_path = f'{path}/spacy_model/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
+    # string representations
+    hits = [match.text for match in matches]
+model_path = f'{path}/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
 model = spacy.load(model_path)
 sentencizer = model.create_pipe('sentencizer')
 model.add_pipe(sentencizer)
@@ -482,7 +485,7 @@ def restructure_hit_sample():
         print("</xml>", file=ofile)
 
 
-def hits_to_txt(queries=queries, remove_non_kw=False, input_files=None):
+def hits_to_txt(queries, remove_non_kw=False, input_files=None):
     """print all matched sentences to text format and save
     context in separate file
     Parameters:
@@ -844,90 +847,90 @@ BERT_topics = [[neighbor for neighbor, similarity in BERT_neighbors[term[0]]]
                for term in terms]
 # format_pilot_study(glob.glob('document_search/parsed_experiments/parsed_ix_pos*'), BERT_topics, False, prefix=prefix)
 # highlight_additions(f'{prefix}target_only_combined_topics.html',
-#                                'target_only_combined_topics.html',
-#                                f'document_search/{prefix}additions')
-topics = [['arbetslöshet', 'arbetslöshet', 'arbetslösheten', 'Arbetslösheten'],
-          ['tillväxt', 'tillväxt', 'tillväxten', 'expansion'],
-          ['klimat', 'klimat', 'klimatet', 'Klimat'],
-          ['missbruk', 'missbruk', 'missbruket', '##missbruk'],
-          ['hälsa', 'hälsa', 'Hälsa', 'hälsar']]
-topics = [['arbetslöshet', 'arbetslösheten', 'Arbetslösheten', 'arbetslöshets', 'arbetslösa', 'arbetslös', 'sysselsättnings', 'Arbetsmarknad', 'arbetsmarknad', '##slöshet'],
-          ['tillväxt', 'tillväxten', 'expansion', '##växt', 'tillväx', '##växten', 'växa', 'expansionen', 'växte', 'växande'],
-          ['klimat', 'klimatet', 'Klimat', '##klimat', 'Klimatet', '##sklimat', 'miljö', 'växthus', '##limat', 'temperatur'],
-          ['missbruk', 'missbruket', '##missbruk', '##issbruk', 'missbrukare', 'knark', 'narkoman', 'narkomaner', 'alkoholm', '##issbrukare'],
-          ['hälsa', 'Hälsa', 'hälsar', 'hälsade', 'hälsan', 'hälsas', 'hälsotillstånd', 'hälso', 'ohälsa', 'Hälso']]
-# remove wordpiece segmentation characters
-topics = [[term.replace('##', '\\B') for term in topic] for topic in topics]
-topics = [['arbetslöshet', 'långtidsarbetslöshet', 'massarbetslöshet', 'arbetslöshet.', 'Arbetslöshet', 'arbetslösheten', 'ungdomsarbetslöshet', 'strukturarbetslöshet', 'Massarbetslöshet', 'deltidsarbetslöshet'],
-          ['tillväxt', 'BNPtillväxt', 'tillväxt.', 'jobbtillväxt', 'tillväxtökning', 'sysselsättningstillväxt', 'produktivitetstillväxt', 'tillväxten', 'produktionstillväxt', 'företagstillväxt'],
-          ['klimat', 'klimat.', 'klimatet', 'sommarklimat', 'lokalklimat', 'vinterklimat', 'uteklimat', 'idéklimat', 'klimatOm', 'kontinentalklimat'],
-          ['missbruk', 'missbruk.', 'narkotikamissbruk', 'missbruket', 'opiatmissbruk', 'Missbruk', 'spritmissbruk', 'blandmissbruk', 'cannabismissbruk', 'missbruk-'],
-          ['hälsa', 'hälsa.', 'Hälsa', 'hälsa-', 'hälsa2', 'hälsah', 'allmänhälsa', 'hälsaGod', 'hälsan', 'hälsan.']]
+#                     'target_only_combined_topics.html',
+#                     f'document_search/{prefix}additions')
+# topics = [['arbetslöshet', 'arbetslöshet', 'arbetslösheten', 'Arbetslösheten'],
+#           ['tillväxt', 'tillväxt', 'tillväxten', 'expansion'],
+#           ['klimat', 'klimat', 'klimatet', 'Klimat'],
+#           ['missbruk', 'missbruk', 'missbruket', '##missbruk'],
+#           ['hälsa', 'hälsa', 'Hälsa', 'hälsar']]
+# topics = [['arbetslöshet', 'arbetslösheten', 'Arbetslösheten', 'arbetslöshets', 'arbetslösa', 'arbetslös', 'sysselsättnings', 'Arbetsmarknad', 'arbetsmarknad', '##slöshet'],
+#           ['tillväxt', 'tillväxten', 'expansion', '##växt', 'tillväx', '##växten', 'växa', 'expansionen', 'växte', 'växande'],
+#           ['klimat', 'klimatet', 'Klimat', '##klimat', 'Klimatet', '##sklimat', 'miljö', 'växthus', '##limat', 'temperatur'],
+#           ['missbruk', 'missbruket', '##missbruk', '##issbruk', 'missbrukare', 'knark', 'narkoman', 'narkomaner', 'alkoholm', '##issbrukare'],
+#           ['hälsa', 'Hälsa', 'hälsar', 'hälsade', 'hälsan', 'hälsas', 'hälsotillstånd', 'hälso', 'ohälsa', 'Hälso']]
+# # remove wordpiece segmentation characters
+# topics = [[term.replace('##', '\\B') for term in topic] for topic in topics]
+# topics = [['arbetslöshet', 'långtidsarbetslöshet', 'massarbetslöshet', 'arbetslöshet.', 'Arbetslöshet', 'arbetslösheten', 'ungdomsarbetslöshet', 'strukturarbetslöshet', 'Massarbetslöshet', 'deltidsarbetslöshet'],
+#           ['tillväxt', 'BNPtillväxt', 'tillväxt.', 'jobbtillväxt', 'tillväxtökning', 'sysselsättningstillväxt', 'produktivitetstillväxt', 'tillväxten', 'produktionstillväxt', 'företagstillväxt'],
+#           ['klimat', 'klimat.', 'klimatet', 'sommarklimat', 'lokalklimat', 'vinterklimat', 'uteklimat', 'idéklimat', 'klimatOm', 'kontinentalklimat'],
+#           ['missbruk', 'missbruk.', 'narkotikamissbruk', 'missbruket', 'opiatmissbruk', 'Missbruk', 'spritmissbruk', 'blandmissbruk', 'cannabismissbruk', 'missbruk-'],
+#           ['hälsa', 'hälsa.', 'Hälsa', 'hälsa-', 'hälsa2', 'hälsah', 'allmänhälsa', 'hälsaGod', 'hälsan', 'hälsan.']]
 
-if __name__ == '__main__':
-    ft = fasttext.load_model('fastText/cc.sv.300.bin')
-    n_terms = [5, 10, 15, 20]
-    ft_neighbors = None
-    BERT_neighbors = None
-    ft_prefix = ""
-    BERT_prefix = ""
-    for i in n_terms:
-        max_n = max(n_terms)
-        print(f'expansion parameter: {i}')
-        topics = []
-        # fasttext terms
-        if ft_neighbors is None:
-            ft_neighbors = {}
-        for term in terms:
-            term = term[0]
-            if term not in ft_neighbors:
-                ft_neighbors[term] = ft.get_nearest_neighbors(term, max_n)
-            topics.append([term] +
-                          [term for sim, term in ft_neighbors[term]][:i])
-        # prefix = f'expanded_fasttext_{i}_'
-        prefix = f'word_b_expanded_fasttext_{i}_'
-        print(topics[0])
-        format_pilot_study(files, topics, False, prefix=prefix)
-        if ft_prefix:
-            highlight_additions(f'{prefix}target_only_combined_topics.html',
-                                'target_only_combined_topics.html',
-                                f'document_search/{prefix}additions')
-        else:
-            highlight_additions(f'{prefix}target_only_combined_topics.html',
-                                f'{ft_prefix}target_only_combined_topics.html',
-                                f'document_search/{prefix}additions')
-        ft_prefix = prefix
 
-        # BERT terms
-        topics = []
-        if BERT_neighbors is None:
-            BERT_neighbors = {}
-        for term in terms:
-            if type(term) == list:
-                term = term[0]
-            if term not in BERT_neighbors:
-                BERT_neighbors[term] = find_nearest_neighbour(term, max_n)
-            topics.append(BERT_neighbors[term][:i])
-        print(topics[0])
-        # prefix = f'expanded_BERT_{i}_'
-        prefix = f'word_b_expanded_BERT_{i}_'
-        format_pilot_study(files, topics, False, prefix=prefix)
-        if BERT_prefix:
-            highlight_additions(f'{prefix}target_only_combined_topics.html',
-                                f'{BERT_prefix}target_only_combined_topics.html',
-                                f'document_search/{prefix}additions')
-        else:
-            highlight_additions(f'{prefix}target_only_combined_topics.html',
-                                'target_only_combined_topics.html',
-                                f'document_search/{prefix}additions')
-        BERT_prefix = prefix
+#     ft = fasttext.load_model('fastText/cc.sv.300.bin')
+#     n_terms = [5, 10, 15, 20]
+#     ft_neighbors = None
+#     BERT_neighbors = None
+#     ft_prefix = ""
+#     BERT_prefix = ""
+#     for i in n_terms:
+#         max_n = max(n_terms)
+#         print(f'expansion parameter: {i}')
+#         topics = []
+#         # fasttext terms
+#         if ft_neighbors is None:
+#             ft_neighbors = {}
+#         for term in terms:
+#             term = term[0]
+#             if term not in ft_neighbors:
+#                 ft_neighbors[term] = ft.get_nearest_neighbors(term, max_n)
+#             topics.append([term] +
+#                           [term for sim, term in ft_neighbors[term]][:i])
+#         # prefix = f'expanded_fasttext_{i}_'
+#         prefix = f'word_b_expanded_fasttext_{i}_'
+#         print(topics[0])
+#         format_pilot_study(files, topics, False, prefix=prefix)
+#         if ft_prefix:
+#             highlight_additions(f'{prefix}target_only_combined_topics.html',
+#                                 'target_only_combined_topics.html',
+#                                 f'document_search/{prefix}additions')
+#         else:
+#             highlight_additions(f'{prefix}target_only_combined_topics.html',
+#                                 f'{ft_prefix}target_only_combined_topics.html',
+#                                 f'document_search/{prefix}additions')
+#         ft_prefix = prefix
 
-    # SpaCy parsing example
-    width = 20
-    parsed = model('''Vi bedömer att den minskade byråkratin i sig kommer att leda till \
-ett förbättrat djurskydd. En annan ordning skulle enligt domstolen leda till att \
-legitimiteten för bestämmelserna minskade , framför allt mot bakgrund av att det oftast \
-är först vid en ansökan om förlängning som det kan kontrolleras om förutsättningarna \
-varit uppfyllda.''')
-    for token in parsed:
-        print(f"{token.text: <{width}} {token.tag_: <{width}} {token.dep_: <{width}}")
+#         # BERT terms
+#         topics = []
+#         if BERT_neighbors is None:
+#             BERT_neighbors = {}
+#         for term in terms:
+#             if type(term) == list:
+#                 term = term[0]
+#             if term not in BERT_neighbors:
+#                 BERT_neighbors[term] = find_nearest_neighbour(term, max_n)
+#             topics.append(BERT_neighbors[term][:i])
+#         print(topics[0])
+#         # prefix = f'expanded_BERT_{i}_'
+#         prefix = f'word_b_expanded_BERT_{i}_'
+#         format_pilot_study(files, topics, False, prefix=prefix)
+#         if BERT_prefix:
+#             highlight_additions(f'{prefix}target_only_combined_topics.html',
+#                                 f'{BERT_prefix}target_only_combined_topics.html',
+#                                 f'document_search/{prefix}additions')
+#         else:
+#             highlight_additions(f'{prefix}target_only_combined_topics.html',
+#                                 'target_only_combined_topics.html',
+#                                 f'document_search/{prefix}additions')
+#         BERT_prefix = prefix
+
+#     # SpaCy parsing example
+#     width = 20
+#     parsed = model('''Vi bedömer att den minskade byråkratin i sig kommer att leda till \
+# ett förbättrat djurskydd. En annan ordning skulle enligt domstolen leda till att \
+# legitimiteten för bestämmelserna minskade , framför allt mot bakgrund av att det oftast \
+# är först vid en ansökan om förlängning som det kan kontrolleras om förutsättningarna \
+# varit uppfyllda.''')
+#     for token in parsed:
+#         print(f"{token.text: <{width}} {token.tag_: <{width}} {token.dep_: <{width}}")
