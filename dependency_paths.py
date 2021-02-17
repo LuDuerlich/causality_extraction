@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-from bs4 import BeautifulSoup
-import re
-from search_terms import filtered_expanded_dict
+# from bs4 import BeautifulSoup
+# import re
+# from search_terms import filtered_expanded_dict
 import pickle
 import spacy
 model_path = 'spacy_model/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
@@ -21,7 +21,7 @@ def find_tokens(markdown):
     causality_tok = []
 
     topic_tok = []
-    freq_dict = {}
+    # freq_dict = {}
 
     doc = model(text)
     for i, token in enumerate(doc):
@@ -29,9 +29,9 @@ def find_tokens(markdown):
             for context in causality_hits:
                 left_context, term, right_context = context.split(',')
                 if term == token.text.strip(','):
-                    ix_ = 0
-                    if term in freq_dict:
-                        ix_ = len(freq_dict[term])
+
+                    # if term in freq_dict:
+                    #    ix_ = len(freq_dict[term])
 
                     # check left context
                     if left_context and doc[max(0, i-1)].text != left_context:
@@ -108,7 +108,7 @@ def _path(t1, t2):
     """
     find the path between two tokens.
     """
-    distance = 0
+    path = 0
     # check if one of the terms is direct or indirect
     # head of the other
     path, is_connection = _check_children(t1, t2)

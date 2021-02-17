@@ -16,7 +16,7 @@ def hierarchy_heuristics(sections, debug=False, doc_title=None):
     super_sections = []
     remove = []
     is_super_section = False
-    if not sections[0].title:
+    if sections and not sections[0].title:
         sections[0].title = doc_title
     if debug:
         print('avg section title length before:',

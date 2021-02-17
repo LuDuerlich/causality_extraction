@@ -6,7 +6,7 @@ import os
 import pickle
 import re
 import torch
-import tensorflow
+# import tensorflow
 
 path = os.path.dirname(os.path.realpath('__file__'))
 use_classic = True
@@ -33,37 +33,58 @@ E = bert_model.embeddings.word_embeddings.weight
 word_embeddings = E.detach().numpy()
 # load pretrained nn model if available
 modelpath = f'{path}/nn_model.gzip'
+#modelpath = f'{path}/CT_nn_model.gzip'
 if os.path.exists(modelpath):
     with GzipFile(modelpath, 'rb') as ifile:
         nn_model = pickle.loads(ifile.read())
-elif False:#input('generate new nearest neighbor model? (y/n)\n>') == 'y':
+elif input('generate new nearest neighbor model? (y/n)\n>') == 'y':
     nn_model = NearestNeighbors(n_neighbors=4, metric='cosine')
     nn_model.fit(word_embeddings)
-    with GzipFile(path, 'wb') as ofile:
+    with GzipFile(modelpath, 'wb') as ofile:
         ofile.write(pickle.dumps(nn_model))
 
 
-def find_nearest_neighbour(sent, n=None, token=None):
+def find_nearest_neighbour(sent, n=30, token=None, threshold=None):
     """
     Parameters:
-              sentence (str):
+              sent (str):
                           a sentence with the token in context (specify
                           index the token of interest as token parameter)
+              n (int):
+                          number of neighbours
+              token (str):
+                          the specific token in the sentence to expand
+              threshold (float):
+                          a similarity threshold to restrict neighbours,
+                          set instead of n
     """
     tokens = tokenizer.tokenize(sent)
     tok_id = tokenizer.convert_tokens_to_ids(tokens)
-    if token:
-        id_ = tokens.index(token)
+    if len(tokens) == 1:
+        if not token:
+            token = tokens[0]
+            id_ = 0
+        else:
+            id_ = tokens.index(token)
         tok_id = tok_id[id_]
         similarity, neighbor_ids = nn_model.kneighbors([word_embeddings[tok_id]], n_neighbors=n)
         neighbors = [tokenizer.convert_ids_to_tokens(id_) for id_ in neighbor_ids]
+        neighbors = list(zip(*neighbors, *similarity))
+        if threshold:
+            neighbors = [neighbor for neighbor in
+                         neighbors if neighbor[1] <= threshold]
+
         # print(f"{token}: {neighbors}")
     else:
-        similarity, neighbor_ids = nn_model.kneighbors([word_embeddings[id_] for id_ in tok_id], n_neighbors=n+3)
+        similarity, neighbor_ids = nn_model.kneighbors([word_embeddings[id_] for id_ in tok_id], n_neighbors=n)
         neighbors = [list(OrderedDict.fromkeys(tokenizer.convert_ids_to_tokens(ids))) for ids in neighbor_ids]
-        # for i, t in enumerate(tokens):
-            # print(f"{t}: {neighbors[i]}")
-    return list(zip(*neighbors, *similarity))[:n]
+        neighbors = [list(zip(neighbors[i], similarity[i])) for i in range(len(neighbors))]
+        if threshold:
+            neighbors = [[neighbor for neighbor in neighbors_
+                          if neighbor[1] <= threshold]
+                         for neighbors_ in neighbors]
+
+    return neighbors
 
 
 def get_token_id(sentence, token, show_tokens=False):
@@ -200,3 +221,14 @@ for n in []:#range(len(sents)):
     print(f'SENTENCE: {sents[n]}, TERM: {terms[n]}')
     dim = compute_cosine_similarities_for_token(sents[n], terms[n])
     
+
+def compute_threshold(terms):
+    """
+    distribution based threshold
+    """
+    std_d, mean = std_dev(terms[1])
+    print(std_d, mean)
+    threshold = mean - (3*std_d)
+    nb_matches = len([el for el in terms[1] if el < threshold])
+    print(nb_matches/len(terms[1]), nb_matches)
+    return threshold

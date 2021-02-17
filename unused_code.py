@@ -1,6 +1,6 @@
 from bs4 import BeautifulSoup
 from html.entities import html5
-from keyword_search import mksentfrag
+from custom_whoosh import mksentfrag
 import re
 import unicodedata
 from whoosh.highlight import *

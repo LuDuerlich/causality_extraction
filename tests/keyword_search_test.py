@@ -48,7 +48,8 @@ def _test_query(terms, res, analyzer=analysis.StandardAnalyzer(stoplist=[])):
         for r in results:
             current_query += r
         current_query += "</query>"
-        print(current_query)
+        # print(current_query)
+        # print(res[i]['full_match'])
         # check that text segments are highligted correctly
         assert res[i]["match_s"] in current_query
         # check that text segments are not duplicated or removed
@@ -59,17 +60,17 @@ def _single_term(analyzer=None):
     if not analyzer:
         analyzer = analysis.StandardAnalyzer(stoplist=[], minsize=1)
         terms = ['this', 'etc.']
-        q1_match = "<query term='this'><match doc='doc1' section='sec1'><hit><em><b>This</b> is a sentence.</em> Here's another one.</hit><hit>or 'et. al.'? <em>How will <b>this</b> text end?</em> We are about to find out. Maybe this can be the final sentence</hit><hit>How will this text end? We are about to find out. <em>Maybe <b>this</b> can be the final sentence</em></hit></match></query>"
-        q2_match = "<query term='etc.'><match doc='doc1' section='sec1'><hit>Here's another one. How about some abbreviations, e.g. '<em><b>etc</b>.</em>' or 'et.</hit></match></query>"
-        q1_sent = "<em><b>This</b> is a sentence.</em>"
-        q2_sent = "<em><b>etc</b>.</em>"
+        q1_match = "<query term='this'><match doc='doc1' section='sec1'><hit><b><em>This</em> is a sentence.</b> Here's another one.</hit><hit>or 'et. al.'? <b>How will <em>this</em> text end?</b> We are about to find out. Maybe this can be the final sentence</hit><hit>How will this text end? We are about to find out. <b>Maybe <em>this</em> can be the final sentence</b></hit></match></query>"
+        q2_match = "<query term='etc.'><match doc='doc1' section='sec1'><hit>Here's another one. How about some abbreviations, e.g. '<b><em>etc</em>.</b>' or 'et.</hit></match></query>"
+        q1_sent = "<b><em>This</em> is a sentence.</b>"
+        q2_sent = "<b><em>etc</em>.</b>"
 
     else:
         terms = ['this', 'etc.']
-        q1_match = "<query term='this'><match doc='doc1' section='sec1'><hit><em><b>This</b> is a sentence.</em> Here's another one.</hit><hit>. al.'<em>? How will <b>this</b> text end?</em> We are about to find out. Maybe this can be the final sentence</hit><hit>? How will this text end? We are about to find out<em>. Maybe <b>this</b> can be the final sentence</em></hit></match></query>"
-        q2_match = "<query term='etc.'><match doc='doc1' section='sec1'><hit>. How about some abbreviations, e.g<em><b>.</b> '<b>etc.</b>' or 'et.</em> al.'?</hit><hit>. 'etc.' or 'et. al<em><b>.</b>'?</em> How will this text end?</hit><hit>? How will this text end? We are about to find out<em><b>.</b> Maybe this can be the final sentence</em></hit></match></query>"
-        q1_sent = "<em><b>This</b> is a sentence.</em>"
-        q2_sent = "<em><b>.</b> '<b>etc.</b>' or 'et.</em>"
+        q1_match = "<query term='this'><match doc='doc1' section='sec1'><hit><b><em>This</em> is a sentence.</b> Here's another one.</hit><hit>. al.'<b>? How will <em>this</em> text end?</b> We are about to find out. Maybe this can be the final sentence</hit><hit>? How will this text end? We are about to find out<b>. Maybe <em>this</em> can be the final sentence</b></hit></match></query>"
+        q2_match = "<query term='etc.'><match doc='doc1' section='sec1'><hit>. How about some abbreviations, e.g<b><em>.</em> '<em>etc.</em>' or 'et.</b> al.'?</hit><hit>. 'etc.' or 'et. al<b><em>.</em>'?</b> How will this text end?</hit><hit>? How will this text end? We are about to find out<b><em>.</em> Maybe this can be the final sentence</b></hit></match></query>"
+        q1_sent = "<b><em>This</em> is a sentence.</b>"
+        q2_sent = "<b><em>.</em> '<em>etc.</em>' or 'et.</b>"
     _test_query(terms, [{"match_s": q1_sent,
                          "full_match": q1_match},
                         {"match_s": q2_sent,
@@ -81,15 +82,15 @@ def _multiple_terms(analyzer=None):
 
         _test_query(['how about'],
                     [{"match_s":
-                      "<em><b>How</b> <b>about</b> some abbreviations, e.g.</em>",
+                      "<b><em>How</em> <em>about</em> some abbreviations, e.g.</b>",
                       "full_match":
-                      "<query term='how about'><match doc='doc1' section='sec1'><hit>This is a sentence. Here's another one. <em><b>How</b> <b>about</b> some abbreviations, e.g.</em> 'etc.</hit><hit>or 'et. al.'? <em><b>How</b> will this text end?</em> We are about to find out.</hit><hit>al.'? How will this text end? <em>We are <b>about</b> to find out.</em></hit></match></query>"}], analyzer)
+                      "<query term='how about'><match doc='doc1' section='sec1'><hit>This is a sentence. Here's another one. <b><em>How</em> <em>about</em> some abbreviations, e.g.</b> 'etc.</hit><hit>or 'et. al.'? <b><em>How</em> will this text end?</b> We are about to find out.</hit><hit>al.'? How will this text end? <b>We are <em>about</em> to find out.</b></hit></match></query>"}], analyzer)
     else:
         _test_query(['how about'],
                     [{"match_s":
-                      "<em>. <b>How</b> <b>about</b> some abbreviations, e.</em>",
+                      "<b>. <em>How</em> <em>about</em> some abbreviations, e.</b>",
                       "full_match":
-                      "<query term='how about'><match doc='doc1' section='sec1'><hit>This is a sentence. Here's another one<em>. <b>How</b> <b>about</b> some abbreviations, e.</em>g.</hit><hit>. al.'<em>? <b>How</b> will this text end?</em> We are about to find out.</hit><hit>.'? How will this text end<em>? We are <b>about</b> to find out.</em></hit></match></query>"}], analyzer)
+                      "<query term='how about'><match doc='doc1' section='sec1'><hit>This is a sentence. Here's another one<b>. <em>How</em> <em>about</em> some abbreviations, e.</b>g.</hit><hit>. al.'<b>? <em>How</em> will this text end?</b> We are about to find out.</hit><hit>.'? How will this text end<b>? We are <em>about</em> to find out.</b></hit></match></query>"}], analyzer)
 
 
 def test_single_term():
@@ -156,28 +157,27 @@ def test_format_parsed_query():
     terms = ['medför//VB', 'tillväxt', 'växt//']
 
     # regular
-    expected_out = Or([Regex(field, r'medför//VB'),
-                       Regex(field, r'tillväxt'),
-                       Regex(field, r'växt//')])
+    expected_out = Or([And([Regex(field, terms[0]), Regex('target', terms[0])]),
+                       And([Regex(field, terms[1]), Regex('target', terms[1])]),
+                       And([Regex(field, terms[2]), Regex('target', terms[2])])])
     format_out = str(format_parsed_query(terms))
     assert str(expected_out) == format_out,\
         f'abnormal output for parsed query: {format_out}'
     
     # strict
-    expected_out = Or([Regex(field, r'^medför//VB'),
-                       Regex(field, r'^tillväxt//'),
-                       Regex(field, r'^växt//')])
+    expected_out = Or([And([Regex(field, rf'^{terms[0]}'), Regex('target', rf'^{terms[0].split("//")[0]}')]),
+                       And([Regex(field, rf'^{terms[1]}//'), Regex('target', rf'^{terms[1]}')]),
+                       And([Regex(field, rf'^{terms[2]}'), Regex('target', rf'^{terms[2].split("//")[0]}')])])
+
     format_out = str(format_parsed_query(terms, strict=True))
     assert str(expected_out) == format_out,\
         f'abnormal output for strict parsed query: {format_out}'
 
 
 def test_format_match():
-    m = ('<em>some string with <b>some</b> html-style <b>highlighting</b></em>',
+    m = ('<b>some string with <em>some</em> html-style <em>highlighting</em></b>',
          {'doc_title': '<h1>Document 1</h1>', 'sec_title': 'The best section'})
-    expected_out = "<match match_nb='2' doc='Document 1'\
- section='The best section'><em>some string with some\
- html-style highlighting</em></match>"
+    expected_out = "<match match_nb='2' doc='Document 1' section='The best section'><b>some string with <em>some</em> html-style <em>highlighting</em></b></match>"
     match = format_match(m, 2)
     assert expected_out == match,\
         f'incorrectly formatted match: {match}'

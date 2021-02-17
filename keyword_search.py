@@ -1,16 +1,15 @@
 import datetime
 from data_extraction import Text
 from bs4 import BeautifulSoup
-import bs4.element
 import copy
-from custom_whoosh import *
-from html.entities import html5
+from custom_whoosh import CustomHighlighter, CustomSentenceFragmenter,\
+    CustomFormatter
 import logging
 import os
 from postprocessing import model, redefine_boundaries
 import tarfile
 import re
-import sys
+# import sys
 # sys.path.append("/Users/luidu652/Documents/causality_extraction/")
 from search_terms import search_terms, expanded_dict,\
     incr_dict, decr_dict, annotated_search_terms,\
@@ -19,18 +18,19 @@ from search_terms import search_terms, expanded_dict,\
 # sys.path.append("/Users/luidu652/Documents/causality_extraction/whoosh/src/")
 # from whoosh.analysis import SpaceSeparatedTokenizer
 from util import find_nearest_neighbour
-from whoosh.fields import Schema, TEXT, KEYWORD, ID, STORED,\
+from whoosh.fields import Schema, TEXT,\
     NUMERIC, DATETIME
 from whoosh.qparser import QueryParser, RegexPlugin
 from whoosh.query import Regex, Or, And, Term, Phrase
-# from whoosh.highlight import *
-from whoosh import index, query, analysis
+from whoosh.highlight import BasicFragmentScorer
+from whoosh import index, analysis
 import random
-import glob
+# import glob
 import pickle
 
 
-logging.basicConfig(filename="keyword_search.log",
+logging.basicConfig(format='%(asctime)s %(levelname)-8s %(message)s',
+                    filename="keyword_search.log",
                     filemode="w",
                     # level=logging.DEBUG
                     level=logging.INFO
@@ -40,7 +40,7 @@ with open('ids_to_date.pickle', 'rb') as ifile:
     ids_to_date = pickle.load(ifile)
 
 path = os.path.dirname(os.path.realpath('__file__'))
-analyzer = StandardAnalyzer(stoplist=[])
+analyzer = analysis.StandardAnalyzer(stoplist=[])
 schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer,
                                lang='se'),
                 date=DATETIME(sortable=True),
@@ -50,9 +50,9 @@ schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer,
                             analyzer=analyzer,
                             lang='se'),
                 parsed_target=TEXT(stored=True, phrase=True,
-                            analyzer=analysis.SpaceSeparatedTokenizer() |\
-                            analysis.LowercaseFilter(),
-                            lang='se'),
+                                   analyzer=analysis.SpaceSeparatedTokenizer()
+                                   | analysis.LowercaseFilter(),
+                                   lang='se'),
                 left_context=TEXT(stored=True, phrase=False,
                                   analyzer=analyzer, lang='se'),
                 right_context=TEXT(stored=True, phrase=False,
@@ -65,8 +65,9 @@ def strip_tags(string):
     return re.sub("<h1>|</h1>", "", string)
 
 
-def create_index(path_=f"{path}/test_index/", ixname="test", random_files=False,
-                 schema=schema, add=False, filenames=None, n=5, parse=False):
+def create_index(path_=f"{path}/test_index/", ixname="test",
+                 random_files=False, schema=schema, add=False,
+                 filenames=None, n=5, parse=False):
     """Create or add to a specified index of files in documents.tar.
 
     Parameters:
@@ -97,6 +98,7 @@ def create_index(path_=f"{path}/test_index/", ixname="test", random_files=False,
         if input(
                 "index directory not empty. delete content?(Y/n) > "
         ).casefold() != "y":
+            print(f'opening exisitin index {path_}')
             ix = index.open_dir(path_, indexname=ixname)
         else:
             logging.info(f'clearing out existing directory: {path_}')
@@ -109,7 +111,11 @@ def create_index(path_=f"{path}/test_index/", ixname="test", random_files=False,
             print(f'creating directory {path_} ...')
             os.system(f'mkdir {path_}')
         ix = index.create_in(path_, schema, indexname=ixname)
-    writer = ix.writer()
+    mem = 1048
+    writer = ix.writer(limitmb=mem/4, procs=4)  # , multisegment=True)
+    # ana = writer.schema['parsed_target'].format.analyzer
+    # ana.chachesize = -1
+    # ana.clear()
     if random_files:
         with open(f"{path}/ix_files.pickle", "rb") as ifile:
             seen = pickle.load(ifile)
@@ -138,67 +144,80 @@ def create_index(path_=f"{path}/test_index/", ixname="test", random_files=False,
         n_files = len(files)
         print(f'{n_files} to be indexed')
         logging.info(f'indexing {n_files} files')
-        for i, key in enumerate(files):
-            text = Text("")
-            if key.endswith("html"):
-                text.from_html(ifile.extractfile(key).read())
-                key = key.split("_")[1].split(".")[0]
-            else:
-                text.from_html(
-                    ifile.extractfile(
-                        f"documents/s_{key}.html"
-                    ).read())
-            for j, section in enumerate(text):
-                document = model(" ".join(section.text))
-                sents = redefine_boundaries(document)
-                for k, sent in enumerate(sents):
-                    left_ctxt = ['']
-                    right_ctxt = ['']
-                    if k > 0:
-                        if n is None:
-                            left_ctxt = sents[:k]
-                        else:
-                            left_ctxt = sents[max(k-n, 0):k]
-                    if k + 1 < len(sents):
-                        if n is None:
-                            right_ctxt = sents[k+1:]
-                        else:
-                            right_ctxt = sents[k+1:min(len(sents), k+1+n)]
-                    target = str(sents[k])
-                    title = re.sub(r'\s+', ' ', section.title)
-                    # apparently, whoosh does not preserve newlines, so we have to
-                    # mark sentence boundaries another way
-
-                    right_ctxt = re.sub(r'\s+', ' ', "###".join(right_ctxt))
-                    left_ctxt = re.sub(r'\s+', ' ', "###".join(left_ctxt))
-
-                    # add date
-                    date = datetime.datetime.fromisoformat(ids_to_date[key][0][1])
-                    if parse:
-                        parsed_target = " ".join(['//'.join([token.text, token.tag_, token.dep_])
-                                  for token in model(target)])
-                        writer.add_document(doc_title=key,
-                                            date=date,
-                                            sec_title=title,
-                                            left_context=left_ctxt,
-                                            right_context=right_ctxt,
-                                            target=target,
-                                            parsed_target=parsed_target,
-                                            sent_nb=k)
-
+        try:
+            for i, key in enumerate(files):
+                text = Text("")
+                if key.endswith("html"):
+                    if os.path.exists(key):
+                        text.from_html(key)
                     else:
-                        writer.add_document(doc_title=key,
-                                            date=date,
-                                            sec_title=title,
-                                            left_context=left_ctxt,
-                                            right_context=right_ctxt,
-                                            target=target,
-                                            sent_nb=k)
+                        text.from_html(ifile.extractfile(key).read())
+                    key = key.split("_")[1].split(".")[0]
+                else:
+                    text.from_html(
+                        ifile.extractfile(
+                            f"documents/s_{key}.html"
+                        ).read())
+                for j, section in enumerate(text):
+                    document = model(" ".join(section.text))
+                    sents = redefine_boundaries(document)
+                    # parsed_sents = model(sents)
+                    for k, sent in enumerate(sents):
+                        left_ctxt = ['']
+                        right_ctxt = ['']
+                        if k > 0:
+                            if n is None:
+                                left_ctxt = sents[:k]
+                            else:
+                                left_ctxt = sents[max(k-n, 0):k]
+                        if k + 1 < len(sents):
+                            if n is None:
+                                right_ctxt = sents[k+1:]
+                            else:
+                                right_ctxt = sents[k+1:min(len(sents), k+1+n)]
+                        target = str(sents[k])
+                        title = re.sub(r'\s+', ' ', section.title)
+                        # apparently, whoosh does not preserve newlines, so we have
+                        # to mark sentence boundaries another way
 
-            if i % 50 == 0:
-                print(f'at file {i} ({text.title, k}), it has {j+1} sections')
-                logging.info(f'at file {i} ({text.title, k}), it has {j+1} sections' +
-                             f'the index currently contains {ix.doc_count()} documents.')
+                        right_ctxt = re.sub(r'\s+', ' ', "###".join(right_ctxt))
+                        left_ctxt = re.sub(r'\s+', ' ', "###".join(left_ctxt))
+
+                        # add date
+                        date = datetime.datetime.fromisoformat(
+                            ids_to_date[key][0][1])
+                        # To Do: parse all sentences in one go
+                        if parse:
+                            parsed_target = " ".join(['//'.join([token.text,
+                                                                 token.tag_,
+                                                                 token.dep_])
+                                                      for token in model(target)])
+                            writer.add_document(doc_title=key,
+                                                date=date,
+                                                sec_title=title,
+                                                left_context=left_ctxt,
+                                                right_context=right_ctxt,
+                                                target=target,
+                                                parsed_target=parsed_target,
+                                                sent_nb=k)
+
+                        else:
+                            writer.add_document(doc_title=key,
+                                                date=date,
+                                                sec_title=title,
+                                                left_context=left_ctxt,
+                                                right_context=right_ctxt,
+                                                target=target,
+                                                sent_nb=k)
+
+                if i % 50 == 0:
+                    print(f'at file {i} ({text.title, k}), it has {j+1} sections')
+                    logging.info(f'at file {i} ({text.title, k}), it has {j+1} ' +
+                                 'sections the index currently contains ' +
+                                 f'{ix.doc_count()} documents.')
+        except:
+            writer.commit()
+            print(f'stopped at file {i} {key}, {j} {section}')
     writer.commit()
 
 
@@ -225,7 +244,7 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
         elif 'body' in ix.schema._fields:
             field = 'body'
         else:
-            raise Exception(f'Unknown schema without field specifier!' +
+            raise Exception('Unknown schema without field specifier!' +
                             'If the index schema does not have a target' +
                             'or body field, specify another field to search!')
     print('field:', field)
@@ -233,10 +252,9 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
     sentf = CustomSentenceFragmenter(maxchars=100000, context_size=4)
     formatter = CustomFormatter(between="\n...")
     highlighter = CustomHighlighter(fragmenter=sentf,
-                                scorer=BasicFragmentScorer(),
-                                formatter=formatter)
+                                    scorer=BasicFragmentScorer(),
+                                    formatter=formatter)
 
-    punct = re.compile(r"[!.?]")
     filename = "example_queries_inflected.xml"
     print("Index:", ix, field)
     if terms[0]:
@@ -271,7 +289,8 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
                                    strict_phrase='"' in _query)]
 
             for i, matched_s in enumerate(matches):
-                query.append(BeautifulSoup(format_match(matched_s[:-1], i), features='lxml'))
+                query.append(BeautifulSoup(format_match(matched_s[:-1], i),
+                                           features='lxml'))
                 # matched_s.results.order = FIRST
         output.write(soup.prettify())
 
@@ -299,10 +318,9 @@ def print_sample_file(keywords=expanded_dict, same_matches=None):
     sentf = CustomSentenceFragmenter(maxchars=1000, context_size=4)
     formatter = CustomFormatter(between="\n...")
     highlighter = CustomHighlighter(fragmenter=sentf,
-                              scorer=BasicFragmentScorer(),
-                              formatter=formatter)
+                                    scorer=BasicFragmentScorer(),
+                                    formatter=formatter)
 
-    punct = re.compile(r"[!.?]")
     xml = BeautifulSoup('<xml></xml>', features='lxml')
     with ix.searcher() as s:
         for key in list(expanded_dict):
@@ -327,7 +345,7 @@ def print_sample_file(keywords=expanded_dict, same_matches=None):
                 for match, i in match_ids:
                     i = int(i)
                     if i < len(matches):
-                        query.append(format_match(matches[i][:-1], nb, i))
+                        query.append(format_match(matches[i][:-1], nb_r, i))
             else:
                 if len(matches) > 10:
                     match_ids = random.sample(matches, 10)
@@ -408,11 +426,12 @@ def format_match(match, match_nb, org_num=None, format_='xml'):
     if org_num:
         xml_match += f"({org_num})' "
     else:
-        xml_match += f"' "
+        xml_match += "' "
     xml_match += (f"doc='{strip_tags(title)}' " +
                   f"section='{sec_title}'>")
     # remove keyword markup
-    hit = re.sub(r'</?b>', '', match[0])
+    # hit = re.sub(r'</?b>', '', match[0])
+    hit = match[0]
     # remove tags
     hit = ' '.join([token.split('//')[0] for token in hit.split()])
     # print(hit)
@@ -423,17 +442,26 @@ def format_match(match, match_nb, org_num=None, format_='xml'):
 
 def format_parsed_query(term_list, strict=False):
     if strict:
-        return Or([Regex('parsed_target', fr"^{t}//") if '//' not in t
-                   else Regex('parsed_target', fr"^{t}")
-                   for t in term_list])
-    return Or([Regex('parsed_target', fr"{t}") for t in term_list])
+        terms = []
+        for term in term_list:
+            if '//' in term:
+                terms.append(And([Regex('parsed_target', fr"^{term}"),
+                                  Regex('target',
+                                        fr"^{term.split('//')[0]}")]))
+            else:
+                terms.append(And([Regex('parsed_target', fr"^{term}//"),
+                                  Regex('target', fr"^{term}")]))
+
+        return Or(terms)
+    return Or([And([Regex('parsed_target', term),
+                    Regex('target', term)]) for term in term_list])
 
 
 def format_simple_query(term_list):
     return Or([Term('target', term) for term in term_list])
 
 
-def format_keyword_queries(keywords, field, slop=1):
+def format_keyword_queries(keywords, field, qp, slop=1):
     terms = []
     for keyword in keywords:
         if '"' in keyword:
@@ -490,18 +518,18 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
 
     """
     sentf = CustomSentenceFragmenter(maxchars=1000,
-                                    context_size=context_size)
+                                     context_size=context_size)
     formatter = CustomFormatter(between="\n...")
     highlighter = CustomHighlighter(fragmenter=sentf,
-                                scorer=BasicFragmentScorer(),
-                                formatter=formatter)
+                                    scorer=BasicFragmentScorer(),
+                                    formatter=formatter)
     if field is None:
         if 'target' in ix.schema._fields:
             field = 'target'
         elif 'body' in ix.schema._fields:
             field = 'body'
         else:
-            raise Exception(f'Unknown schema without field specifier!' +
+            raise Exception('Unknown schema without field specifier!' +
                             'If the index schema does not have a target or' +
                             'body field, specify another field to search!')
     qp = QueryParser(field, schema=ix.schema)
@@ -510,7 +538,7 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
     text.from_html(f'documents/ft_{id_}.html')
     print(f'documents/ft_{id_}.html')
     matches_by_section = {}
-    _query = format_keyword_queries(keywords, field, slop)
+    _query = format_keyword_queries(keywords, field, qp, slop)
     prefix = f'{prefix}{id_}_{year}_'
     if query_expansion:
         prefix += 'extended_'
@@ -526,7 +554,8 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                     for term in term_list:
                         term_list_.append([nn.replace('##', '\\B')
                                            for nn, sim in
-                                           find_nearest_neighbour(term, exp_factor)])
+                                           find_nearest_neighbour(term,
+                                                                  exp_factor)])
                     additional_terms[i].append(term_list_)
                     terms = Or([format_query(q) for q in term_list_])
                 else:
@@ -541,18 +570,17 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
         res = searcher.search(query, terms=True, limit=None)
         if field == 'target':
             matches = []
-            print('this', len(res))
             for m in res:
                 hits = highlighter.highlight_hit(
                         m, "target", top=len(m.results),
-                        strict_phrase='"' in _query)
+                        strict_phrase=True)
                 for hit, start_pos in hits:
                     matches.append((hit, m, m['sent_nb']))
         else:
             matches = [(hit, m, start_pos) for m in res
                        for hit, start_pos in highlighter.highlight_hit(
                                m, field, top=len(m.results),
-                               strict_phrase='"' in _query)]
+                               strict_phrase=True)]
 
         for i, match in enumerate(matches):
             if match[1]['sec_title'] not in matches_by_section:
@@ -570,10 +598,10 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
         style = output.new_tag('style')
         style.append("""
         body {
-	margin-top: 4%;
-	margin-bottom: 8%;
-	margin-right: 13%;
-	margin-left: 13%;
+        margin-top: 4%;
+        margin-bottom: 8%;
+        margin-right: 13%;
+        margin-left: 13%;
         }
         """)
         head.append(style)
@@ -602,11 +630,6 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                 if format_ == 'xml':
                     sec.append(el.match)
                 else:
-                    el.p.em.name = 'b'
-                    for i, content in enumerate(el.p.b.contents):
-                        if type(content) == bs4.element.Tag:
-                            el.p.b.contents[i] = content.text
-
                     element = output.new_tag('li')
                     element.append(el.p)
                     list_.append(element)
@@ -645,18 +668,6 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
 if __name__ == "__main__":
     # analyzer = BasicTokenizer(do_lower_case=False) |\
     #    analysis.LowercaseFilter()
-    analyzer = StandardAnalyzer(stoplist=[])
-    schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer,
-                                   lang='se'),
-                    sec_title=TEXT(stored=True, analyzer=analyzer,
-                                   lang='se'),
-                    target=TEXT(stored=True, phrase=True,
-                                analyzer=analyzer, lang='se'),
-                    left_context=TEXT(stored=True, phrase=False,
-                                      analyzer=analyzer, lang='se'),
-                    right_context=TEXT(stored=True, phrase=False,
-                                       analyzer=analyzer, lang='se'),
-                    sent_nb=NUMERIC(stored=True, sortable=True))
     # ix = index.open_dir("yet_another_ix", indexname="big_index")
     # ix = index.open_dir("test_index", indexname="test")
     # ix = index.open_dir("bigger_index", indexname="big_index")
@@ -671,10 +682,13 @@ if __name__ == "__main__":
              'documents/ft_GRB350d3.html', 'documents/ft_GVB386.html',
              'documents/ft_GYB362.html', 'documents/ft_H1B314.html',
              'documents/ft_H4B391.html', 'documents/ft_H7B312.html']
-    create_index('parsed_schema_document_ix', schema=schema, filenames=paths, parse=True)
+    create_index('parsed_schema_document_ix', schema=schema, filenames=paths,
+                 parse=True)
     query_list = [wf for term in expanded_dict.values() for wf in term]
-    filtered_query_list = [wf for term in filtered_expanded_dict.values() for wf in term]
-    tagged_list = create_tagged_term_list(filtered_expanded_dict, annotated_search_terms)
+    filtered_query_list = [wf for term in filtered_expanded_dict.values()
+                           for wf in term]
+    tagged_list = create_tagged_term_list(filtered_expanded_dict,
+                                          annotated_search_terms)
     decr_terms = [wf for term in {**decr_dict, **incr_dict}.values()
                   for wf in term]
     decr_terms_pos = [f'{wf}//{keys_to_pos[key]}' for key, term
@@ -690,7 +704,6 @@ if __name__ == "__main__":
     match_counter = 0
     sec_counter = 0
     format_ = 'html'
-    # for i, id_ in enumerate(ids[1:2]):
     for i, id_ in enumerate(ids):
         print(years[i], id_)
         # secs, matches = query_document(ix, id_, keywords=query_list,
@@ -701,11 +714,17 @@ if __name__ == "__main__":
         #                               year=years[i], format_=format_,
         #                               additional_terms=[decr_terms],
         #                               field='target')
-        secs, matches, expanded_terms = query_document(ix, id_, keywords=tagged_list,
-                                       year=years[i], format_=format_,
-                                                       additional_terms=[[]] + [list(topics)],
-                                       #[term for topic in topics for term in topic]],
-                                       field='target', query_expansion=True, exp_factor=20,
+        secs, matches, expanded_terms = query_document(ix, id_,
+                                                       keywords=tagged_list,
+                                                       year=years[i],
+                                                       format_=format_,
+                                                       additional_terms=[[]] +
+                                                       [list(topics)],
+                                                       # [term for topic in
+                                                       # topics for term in topic]],
+                                                       field='target',
+                                                       query_expansion=True,
+                                                       exp_factor=20,
                                                        prefix='pos_filtered_topics_only_',
                                                        slop=1)
 

@@ -1,5 +1,5 @@
 from bs4 import BeautifulSoup
-import fasttext
+# import fasttext
 import glob
 from spacy.tokens.span import Span
 from search_terms import expanded_dict
@@ -15,6 +15,7 @@ from util import find_nearest_neighbour
 
 path = os.path.dirname(os.path.realpath('__file__'))
 
+
 def fix_file(filename):
     """replace magic characters in a markup file with entity characters"""
     if filename.endswith('.html'):
@@ -28,11 +29,11 @@ def fix_file(filename):
                              features='lxml')
     segments = filename.split('/')
     dir_, name = '/'.join(segments[:-1]), segments[-1]
-    with open('/'.join([dir_, 'new_' + name]), 'w') as ofile:
+    with open('/'.join([dir_, 'new_' + name]) if dir_ else 'new_' + name, 'w') as ofile:
         if markup == 'html':
             ofile.write(soup.prettify(formatter='html5'))
         else:
-            ofile.write(soup)
+            ofile.write(soup.prettify())  # formatter='xml'))
 
 
 def remove_accent_chars(x: str):
@@ -828,7 +829,7 @@ BERT_neighbors = {'hälsa': [('hälsa', 0.0), ('Hälsa', 0.37756878),
                                ('narkotikam', 0.6759534), ('återfall', 0.6785668),
                                ('användandet', 0.6790303), ('alkoholen', 0.6793245),
                                ('prostitution', 0.6801337), ('utnyttjade', 0.68087363)]}
-terms = [['arbetslöshet'], ['tillväxt'],
+terms = [['arbetslöshet'], #['tillväxt'],
          ['klimat'], ['missbruk'], ['hälsa']]
 prefix = 'parsed_filtered_BERT'
 max_n = 20
@@ -841,10 +842,10 @@ for term in terms:
 
 BERT_topics = [[neighbor for neighbor, similarity in BERT_neighbors[term[0]]]
                for term in terms]
-format_pilot_study(glob.glob('document_search/parsed_experiments/parsed_ix_pos*'), BERT_topics, False, prefix=prefix)
-highlight_additions(f'{prefix}target_only_combined_topics.html',
-                                'target_only_combined_topics.html',
-                                f'document_search/{prefix}additions')
+# format_pilot_study(glob.glob('document_search/parsed_experiments/parsed_ix_pos*'), BERT_topics, False, prefix=prefix)
+# highlight_additions(f'{prefix}target_only_combined_topics.html',
+#                                'target_only_combined_topics.html',
+#                                f'document_search/{prefix}additions')
 topics = [['arbetslöshet', 'arbetslöshet', 'arbetslösheten', 'Arbetslösheten'],
           ['tillväxt', 'tillväxt', 'tillväxten', 'expansion'],
           ['klimat', 'klimat', 'klimatet', 'Klimat'],
