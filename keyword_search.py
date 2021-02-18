@@ -6,7 +6,8 @@ from custom_whoosh import CustomHighlighter, CustomSentenceFragmenter,\
     CustomFormatter
 import logging
 import os
-from postprocessing import model, redefine_boundaries
+import spacy
+from spacy.tokens.span import Span
 import tarfile
 import traceback
 import re
@@ -28,7 +29,7 @@ from whoosh import index, analysis
 import random
 # import glob
 import pickle
-
+path = os.path.realpath('__file__').strip('__file__')
 for handler in logging.root.handlers[:]:
     logging.root.removeHandler(handler)
 
@@ -51,6 +52,13 @@ def setup_log(name, logname):
 
 logger = setup_log('whoosh_logger', logname)
 
+model_path = f'{path}/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
+if not os.path.exists(model_path):
+    model_path = f'{path}/spacy_model/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
+model = spacy.load(model_path)
+sentencizer = model.create_pipe('sentencizer')
+model.add_pipe(sentencizer)
+
 
 with open('ids_to_date.pickle', 'rb') as ifile:
     ids_to_date = pickle.load(ifile)
@@ -62,9 +70,9 @@ schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer,
                 date=DATETIME(sortable=True),
                 sec_title=TEXT(stored=True, analyzer=analyzer,
                                lang='se'),
-                target=TEXT(stored=True, phrase=True,
-                            analyzer=analyzer,
-                            lang='se'),
+                #target=TEXT(stored=True, phrase=True,
+                #            analyzer=analyzer,
+                #            lang='se'),
                 parsed_target=TEXT(stored=True, phrase=True,
                                    analyzer=analysis.SpaceSeparatedTokenizer()
                                    | analysis.LowercaseFilter(),
@@ -74,6 +82,71 @@ schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer,
                 right_context=TEXT(stored=True, phrase=False,
                                    analyzer=analyzer, lang='se'),
                 sent_nb=NUMERIC(stored=True, sortable=True))
+
+
+
+def redefine_boundaries(sents):
+    """correct sentence boundaries of spacy sentencizer
+    based on rules for abbreviation and possessive markers
+    Parameters:
+               sents (spacy.tokens.span.Span):
+                           a spacy sents generator of Span objects
+    """
+
+    ents = [str(ent) for ent in sents.ents]
+    sents = list(sents.sents)
+    abr_exp = re.compile(r"(m\.m|osv|etc)\.")
+    poss_exp = re.compile(r"\b[A-ZÄÖÅ0-9]+\b:$")
+    for i in range(len(sents)):
+        if i+1 >= len(sents):
+            break
+        has_abbrev = abr_exp.findall(str(sents[i]))[::-1]
+        if has_abbrev:
+            if type(sents[i]) == Span:
+                tokens = list(sents[i].__iter__())
+            else:
+                tokens = sents[i].split()
+            last = None
+            while has_abbrev:
+                nb_abbr = len(has_abbrev)
+                for j, t in enumerate(tokens):
+                    if not has_abbrev:
+                        break
+                    if has_abbrev[-1] in str(t):
+                        if j+1 < len(tokens) and\
+                           (str(tokens[j+1]).istitle() and
+                            str(tokens[j+1]) not in ents):
+                            has_abbrev.pop(-1)
+                            new_s = " ".join(
+                                [str(tok) for tok in tokens[j+1:]])
+                            following = sents[i+1:]
+                            sents[i] = " ".join(
+                                [str(tok) for tok in tokens[:j+1]])
+                            sents[i+1] = new_s
+                            sents = sents[:i+2]
+                            sents.extend(following)
+                if nb_abbr == len(has_abbrev):
+                    has_abbrev.pop(-1)
+
+        # possessives of acronyms etc. tend to get split at the colon
+        # i.e. 'EU:s direktiv ...' -> 'EU:', 's direktiv ...'
+        has_poss = poss_exp.findall(str(sents[i]))
+        split_on_poss = (has_poss and
+                         (i + 1 < len(sents)
+                          and re.match('[a-zäåö]', str(sents[i+1])[:2])))
+        if split_on_poss:
+            sents[i] = re.sub(r" ([.,;:!?])", r"\1",
+                              str(sents[i]) + str(sents[i+1]))
+            del sents[i+1]
+        else:
+            sents[i] = re.sub(r" ([.,;:!?])", r"\1", str(sents[i]))
+
+        # sentences that start with parentheses are split at open parentheses
+        if str(sents[i]).endswith("(") and i + 1 < len(sents):
+            sents[i] = str(sents[i]).rstrip(' (')
+            sents[i+1] = '(' + str(sents[i+1]).lstrip()
+        sents = [str(s) for s in sents]
+    return sents
 
 
 def strip_tags(string):
@@ -214,14 +287,14 @@ def create_index(path_=f"{path}/test_index/", ixname="test",
                             parsed_target = " ".join(['//'.join([token.text,
                                                                  token.tag_,
                                                                  token.dep_,
-                                                                 token.head.i])
+                                                                 str(token.head.i)])
                                                       for token in model(target)])
                             writer.add_document(doc_title=key,
                                                 date=date,
                                                 sec_title=title,
                                                 left_context=left_ctxt,
                                                 right_context=right_ctxt,
-                                                target=target,
+                                                #target=target,
                                                 parsed_target=parsed_target,
                                                 sent_nb=k)
 
@@ -235,7 +308,7 @@ def create_index(path_=f"{path}/test_index/", ixname="test",
                                                 sent_nb=k)
 
                 if i % 50 == 0:
-                    print(f'at file {i} ({text.title, k}), it has {j+1} sections')
+                    print(f'{datetime.datetime.now()} at file {i} ({text.title, k}), it has {j+1} sections')
                     logging.info(f'at file {i} ({text.title, k}), it has {j+1} ' +
                                  'sections the index currently contains ' +
                                  f'{ix.doc_count()} documents.')

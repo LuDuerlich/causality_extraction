@@ -1,7 +1,8 @@
 import pytest
 import re, sys
-sys.path.append("/Users/luidu652/Documents/causality_extraction/")
 import os
+current_path = os.path.realpath('__file__')
+sys.path.append(current_path.strip('__file__'))
 from whoosh import index, query, fields, analysis
 from whoosh.util.testing import TempIndex
 from whoosh.qparser import QueryParser
@@ -181,3 +182,12 @@ def test_format_match():
     match = format_match(m, 2)
     assert expected_out == match,\
         f'incorrectly formatted match: {match}'
+
+def test_redefine_boundaries():
+    sents = ['Det här är en mening!',
+            'Det gäller at övertyga EU:s befolkning.',
+            '(1) Ibland har SpaCy problem med parenteser.']
+    spacy_doc = model(' '.join(sents))
+    new_boundaries = redefine_boundaries(spacy_doc)
+    assert list(spacy_doc.sents) != sents
+    assert new_boundaries == sents

@@ -1,7 +1,7 @@
 from bs4 import BeautifulSoup
 # import fasttext
 import glob
-from spacy.tokens.span import Span
+from keyword_search import redefine_boundaries
 from search_terms import expanded_dict
 import spacy
 import pytest
@@ -51,12 +51,6 @@ if os.path.exists(sample_file):
 
     # string representations
     hits = [match.text for match in matches]
-model_path = f'{path}/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
-if not os.path.exists(model_path):
-    model_path = f'{path}/spacy_model/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
-model = spacy.load(model_path)
-sentencizer = model.create_pipe('sentencizer')
-model.add_pipe(sentencizer)
 
 
 def try_language_models(m1=None, m2=None, m3=None, debug=False, ix=[0]):
@@ -387,70 +381,6 @@ def format_txt_match(sents, match_id, context, highlight_query):
                         "right": right_context,
                         "match": str(match)})
     return matches
-
-
-def redefine_boundaries(sents):
-    """correct sentence boundaries of spacy sentencizer
-    based on rules for abbreviation and possessive markers
-    Parameters:
-               sents (spacy.tokens.span.Span):
-                           a spacy sents generator of Span objects
-    """
-
-    ents = [str(ent) for ent in sents.ents]
-    sents = list(sents.sents)
-    abr_exp = re.compile(r"(m\.m|osv|etc)\.")
-    poss_exp = re.compile(r"\b[A-ZÄÖÅ0-9]+\b:$")
-    for i in range(len(sents)):
-        if i+1 >= len(sents):
-            break
-        has_abbrev = abr_exp.findall(str(sents[i]))[::-1]
-        if has_abbrev:
-            if type(sents[i]) == Span:
-                tokens = list(sents[i].__iter__())
-            else:
-                tokens = sents[i].split()
-            last = None
-            while has_abbrev:
-                nb_abbr = len(has_abbrev)
-                for j, t in enumerate(tokens):
-                    if not has_abbrev:
-                        break
-                    if has_abbrev[-1] in str(t):
-                        if j+1 < len(tokens) and\
-                           (str(tokens[j+1]).istitle() and
-                            str(tokens[j+1]) not in ents):
-                            has_abbrev.pop(-1)
-                            new_s = " ".join(
-                                [str(tok) for tok in tokens[j+1:]])
-                            following = sents[i+1:]
-                            sents[i] = " ".join(
-                                [str(tok) for tok in tokens[:j+1]])
-                            sents[i+1] = new_s
-                            sents = sents[:i+2]
-                            sents.extend(following)
-                if nb_abbr == len(has_abbrev):
-                    has_abbrev.pop(-1)
-
-        # possessives of acronyms etc. tend to get split at the colon
-        # i.e. 'EU:s direktiv ...' -> 'EU:', 's direktiv ...'
-        has_poss = poss_exp.findall(str(sents[i]))
-        split_on_poss = (has_poss and
-                         (i + 1 < len(sents)
-                          and re.match('[a-zäåö]', str(sents[i+1])[:2])))
-        if split_on_poss:
-            sents[i] = re.sub(r" ([.,;:!?])", r"\1",
-                              str(sents[i]) + str(sents[i+1]))
-            del sents[i+1]
-        else:
-            sents[i] = re.sub(r" ([.,;:!?])", r"\1", str(sents[i]))
-
-        # sentences that start with parentheses are split at open parentheses
-        if str(sents[i]).endswith("(") and i + 1 < len(sents):
-            sents[i] = str(sents[i]).rstrip(' (')
-            sents[i+1] = '(' + str(sents[i+1]).lstrip()
-        sents = [str(s) for s in sents]
-    return sents
 
 
 def format_output(queries, dest=None):
