@@ -1,6 +1,97 @@
 from whoosh.highlight import *
 from whoosh.analysis import StandardAnalyzer
-from whoosh.query import CompoundQuery
+from whoosh.query import CompoundQuery, Phrase, SplitOr
+from itertools import product
+import re
+
+class RegexPhrase(Phrase):
+    def __init__(self, fieldname, words, slop=1, boost=1.0, char_ranges=None):
+        """
+        :param fieldname: the field to search.
+        :param words: a list of words (unicode strings) in the phrase.
+        :param slop: the number of words allowed between each "word" in the
+            phrase; the default of 1 means the phrase must match exactly.
+        :param boost: a boost factor that to apply to the raw score of
+            documents matched by this query.
+        :param char_ranges: if a Phrase object is created by the query parser,
+            it will set this attribute to a list of (startchar, endchar) pairs
+            corresponding to the words in the phrase
+        """
+
+        self.fieldname = fieldname
+        self.words = words
+        self.slop = slop
+        self.boost = boost
+        self.char_ranges = char_ranges
+
+    def matcher(self, searcher, context=None):
+        from whoosh.query import Term, SpanNear2
+        from whoosh import matching
+        from whoosh.scoring import WeightScorer
+
+        fieldname = self.fieldname
+        if fieldname not in searcher.schema:
+            return matching.NullMatcher()
+
+        field = searcher.schema[fieldname]
+        if not field.format or not field.format.supports("positions"):
+            raise qcore.QueryError("RegexPhrase search: %r field has no positions"
+                                   % self.fieldname)
+
+        terms = {}
+        # Build a list of Term queries from the words in the phrase
+        reader = searcher.reader()
+        for i, word in enumerate(self.words):
+            try:
+                word = field.to_bytes(word)
+            except ValueError:
+                return matching.NullMatcher()
+
+            terms[i] = []
+            # if (fieldname, word) not in reader:
+                # Shortcut the query if one of the words doesn't exist.
+                # return matching.NullMatcher()
+            for fname, fword in reader._terms.terms():
+                if fname == fieldname:
+                    if re.search(word, fword):
+                        terms[i].append(Term(fieldname, fword))
+
+        m = []
+        max_score = 0
+        # create possible term combinations
+        # print(list(product(*[terms[i] for i in range(len(terms))])))
+        count = 0
+        for combination in product(*[terms[i] for i in range(len(terms))]):
+            # Create the equivalent SpanNear2 query from the terms
+            q = SpanNear2(combination, slop=self.slop, ordered=True, mindist=1)
+            count += 1
+            if self.boost != 1.0:
+                matcher = matching.WrappingMatcher(q.matcher(searcher,
+                                                             context),
+                                                   boost=self.boost)
+            else:
+                matcher = q.matcher(searcher, context)
+            if matcher and matcher.is_active():
+                m.append(matcher)
+                #score = matcher.score()
+                #if score > max_score:
+                #    max_score = score
+                # print(combination, m[-1])
+        # TODO we still need to combined them
+        # doccount = searcher.doc_count_all()
+        print(f'{count} combinations')
+        #return m
+        # m = matching.ArrayUnionMatcher(m, doccount)
+        # Get the matcher
+        if m:
+            doccount = searcher.doc_count_all()
+            m = matching.ArrayUnionMatcher(m, doccount)
+            #m = matching.MultiMatcher(m, list(range(len(m))), scorer=WeightScorer(score))
+        else:
+            m = matching.NullMatcher()
+        # m = SplitOr._matcher( 
+        return m
+
 
 
 def set_matched_filter_phrases_(tokens, text, terms, phrases, analyzer):
@@ -217,8 +308,8 @@ class CustomHighlighter(Highlighter):
             tokens.sort(key=lambda t: t.startchar)
             tokens = [max(group, key=lambda t: t.endchar - t.startchar)
                       for key, group in groupby(tokens, lambda t: t.startchar)]
-            if fieldname == 'target':
-                text = [[hitobj['left_context'], hitobj['target'],
+            if fieldname == 'parsed_target':
+                text = [[hitobj['left_context'], hitobj['parsed_target'],
                          hitobj['right_context']]]
                 fragments = self.fragmenter.fragment_tokens(text,
                                                             tokens,
@@ -240,8 +331,8 @@ class CustomHighlighter(Highlighter):
             else:
                 tokens = set_matched_filter(tokens, words)
             tokens = self._merge_matched_tokens(tokens)
-            if fieldname == 'target':
-                text = [hitobj['left_context'], hitobj['target'],
+            if fieldname == 'parsed_target':
+                text = [hitobj['left_context'], hitobj['parsed_target'],
                         hitobj['right_context']]
                 fragments = self.fragmenter.fragment_tokens(text,
                                                             tokens,

@@ -3,7 +3,7 @@ from data_extraction import Text
 from bs4 import BeautifulSoup
 import copy
 from custom_whoosh import CustomHighlighter, CustomSentenceFragmenter,\
-    CustomFormatter
+    CustomFormatter, RegexPhrase
 import logging
 import os
 import spacy
@@ -21,9 +21,9 @@ from search_terms import search_terms, expanded_dict,\
 # from whoosh.analysis import SpaceSeparatedTokenizer
 from util import find_nearest_neighbour
 from whoosh.fields import Schema, TEXT,\
-    NUMERIC, DATETIME
+    NUMERIC, DATETIME, ID
 from whoosh.qparser import QueryParser, RegexPlugin
-from whoosh.query import Regex, Or, And, Term, Phrase
+from whoosh.query import Regex, Or, And, Term, Phrase, SpanNear2
 from whoosh.highlight import BasicFragmentScorer
 from whoosh import index, analysis
 import random
@@ -43,12 +43,13 @@ def setup_log(name, logname):
     log_format = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     filename = f"./test_{name}.log"
     log_handler = logging.FileHandler(filename)
-    log_handler.setLevel(logging.DEBUG)
+    log_handler.setLevel(logging.INFO)
     log_handler.setFormatter(log_format)
 
     logger.addHandler(log_handler)
 
     return logger
+
 
 logger = setup_log('whoosh_logger', logname)
 
@@ -65,7 +66,8 @@ with open('ids_to_date.pickle', 'rb') as ifile:
 
 path = os.path.dirname(os.path.realpath('__file__'))
 analyzer = analysis.StandardAnalyzer(stoplist=[])
-schema = Schema(doc_title=TEXT(stored=True, analyzer=analyzer,
+schema = Schema(id=ID(stored=True, unique=True),
+                doc_title=TEXT(stored=True, analyzer=analyzer,
                                lang='se'),
                 date=DATETIME(sortable=True),
                 sec_title=TEXT(stored=True, analyzer=analyzer,
@@ -289,12 +291,13 @@ def create_index(path_=f"{path}/test_index/", ixname="test",
                                                                  token.dep_,
                                                                  str(token.head.i)])
                                                       for token in model(target)])
-                            writer.add_document(doc_title=key,
+                            writer.add_document(id=".".join([str(nb) for nb in (i,j,k)]),
+                                                doc_title=key,
                                                 date=date,
                                                 sec_title=title,
                                                 left_context=left_ctxt,
                                                 right_context=right_ctxt,
-                                                #target=target,
+                                                target=target,
                                                 parsed_target=parsed_target,
                                                 sent_nb=k)
 
@@ -334,19 +337,19 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
                         additional terms to search for; e.g. 'klimatförendring'
                         (required: no)
        field (str):
-                        the field to search if none is specified, 'target' or
+                        the field to search if none is specified, 'parsed_target' or
                         'body' are searched depending on the schema
     """
 
     print('field:', field)
     if field is None:
-        if 'target' in ix.schema._fields:
-            field = 'target'
+        if 'parsed_target' in ix.schema._fields:
+            field = 'parsed_target'
         elif 'body' in ix.schema._fields:
             field = 'body'
         else:
             raise Exception('Unknown schema without field specifier!' +
-                            'If the index schema does not have a target' +
+                            'If the index schema does not have a parsed_target' +
                             'or body field, specify another field to search!')
     print('field:', field)
     qp = QueryParser(field, schema=ix.schema)
@@ -374,7 +377,7 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
             xml.append(query)
             parsed_query = qp.parse(_query)
             r = s.search(parsed_query, terms=True, limit=None)
-            if field == 'target':
+            if field == 'parsed_target':
                 matches = []
                 print('results:', len(r))
                 for m in r:
@@ -546,27 +549,26 @@ def format_parsed_query(term_list, strict=False):
         terms = []
         for term in term_list:
             if '//' in term:
-                terms.append(And([Regex('parsed_target', fr"^{term}"),
-                                  Regex('target',
-                                        fr"^{term.split('//')[0]}")]))
+                terms.append(Regex('parsed_target', fr"^{term}"))
             else:
-                terms.append(And([Regex('parsed_target', fr"^{term}//"),
-                                  Regex('target', fr"^{term}")]))
+                terms.append(Regex('parsed_target', fr"^{term}//"))
 
         return Or(terms)
-    return Or([And([Regex('parsed_target', term),
-                    Regex('target', term)]) for term in term_list])
+    return Or([Regex('parsed_target', term) for term in term_list])
 
 
 def format_simple_query(term_list):
-    return Or([Term('target', term) for term in term_list])
+    return Or([Term('parsed_target', term) for term in term_list])
 
 
 def format_keyword_queries(keywords, field, qp, slop=1):
     terms = []
     for keyword in keywords:
         if '"' in keyword:
-            terms.append(Phrase(field, keyword.strip('"').split(), slop=slop))
+            # terms.append(Phrase(field, keyword.strip('"').split(), slop=slop))
+            terms.append(RegexPhrase(field,
+                                     [fr'^{term}//' for term in keyword.strip('"').split()],
+                                     slop=slop))
         elif '//' in keyword:
             terms.append(And([format_parsed_query([keyword], True)[0],
                               Term(field, keyword.split('//')[0])]))
@@ -625,13 +627,13 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                                     scorer=BasicFragmentScorer(),
                                     formatter=formatter)
     if field is None:
-        if 'target' in ix.schema._fields:
-            field = 'target'
+        if 'parsed_target' in ix.schema._fields:
+            field = 'parsed_target'
         elif 'body' in ix.schema._fields:
             field = 'body'
         else:
             raise Exception('Unknown schema without field specifier!' +
-                            'If the index schema does not have a target or' +
+                            'If the index schema does not have a parsed_target or' +
                             'body field, specify another field to search!')
     qp = QueryParser(field, schema=ix.schema)
     qp.add_plugin(RegexPlugin())
@@ -669,11 +671,12 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
         query = And([qp.parse(f'doc_title:{id_}'), _query])
         logger.info(f'Query: {query}')
         res = searcher.search(query, terms=True, limit=None)
-        if field == 'target':
+        if field == 'parsed_target':
             matches = []
+            print(len(res))
             for m in res:
                 hits = highlighter.highlight_hit(
-                        m, "target", top=len(m.results),
+                        m, field, top=len(m.results),
                         strict_phrase=True)
                 for hit, start_pos in hits:
                     matches.append((hit, m, m['sent_nb']))
@@ -823,7 +826,7 @@ if __name__ == "__main__":
                                                        [list(topics)],
                                                        # [term for topic in
                                                        # topics for term in topic]],
-                                                       field='target',
+                                                       field='parsed_target',
                                                        query_expansion=True,
                                                        exp_factor=20,
                                                        prefix='pos_filtered_topics_only_',

@@ -21,7 +21,6 @@ def find_tokens(markdown):
     causality_tok = []
 
     topic_tok = []
-    # freq_dict = {}
 
     doc = model(text)
     for i, token in enumerate(doc):
@@ -29,9 +28,6 @@ def find_tokens(markdown):
             for context in causality_hits:
                 left_context, term, right_context = context.split(',')
                 if term == token.text.strip(','):
-
-                    # if term in freq_dict:
-                    #    ix_ = len(freq_dict[term])
 
                     # check left context
                     if left_context and doc[max(0, i-1)].text != left_context:
