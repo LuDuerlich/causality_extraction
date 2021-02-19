@@ -182,7 +182,9 @@ def create_index(path_=f"{path}/test_index/", ixname="test",
                           (if None, stores all the context available
                           within the section)
     """
-
+    print()
+    print('PATH:', path_, os.path.exists(path_))
+    print()
     if not path_.endswith("/"):
         path_ += "/"
     if os.path.exists(path_) and os.listdir(path_):
@@ -227,7 +229,7 @@ def create_index(path_=f"{path}/test_index/", ixname="test",
                  "H2B348", "H2B349", "H2B35"]
     logger.info(f'creating index: {ixname}')
     mem = 2096
-    writer = ix.writer(limitmb=mem/4, procs=4)
+    writer = ix.writer(limitmb=mem/4)#, procs=4)
     with tarfile.open(f"{path}/documents.tar", "r") as ifile:
          #ix.writer(limitmb=mem/4, procs=4) as writer:
          # ix.writer(limitmb=mem/4, procs=4, multisegment=True) as writer:
@@ -291,7 +293,7 @@ def create_index(path_=f"{path}/test_index/", ixname="test",
                                                                  token.dep_,
                                                                  str(token.head.i)])
                                                       for token in model(target)])
-                            writer.add_document(id=".".join([str(nb) for nb in (i,j,k)]),
+                            writer.add_document(id=".".join([str(nb) for nb in (key,j,k)]),
                                                 doc_title=key,
                                                 date=date,
                                                 sec_title=title,
@@ -387,7 +389,7 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
                     for hit, start_pos in hits:
                         matches.append((hit, m, m['sent_nb']))
             else:
-                matches = [(hit, m, start_pos) for m in r
+                matches = [(hit[0], m, hit[-1]) for m in r
                            for hit in highlighter.highlight_hit(
                                    m, field, top=len(m.results),
                                    strict_phrase='"' in _query)]
