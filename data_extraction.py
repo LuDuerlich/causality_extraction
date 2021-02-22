@@ -27,7 +27,8 @@ def hierarchy_heuristics(sections, debug=False, doc_title=None):
             is_super_section = True
         if len(sections[i]):
             # can potentially be merged with previous section
-            if is_empty and (sections[i].title[0].islower() or
+            if is_empty and sections[i].title and\
+               (sections[i].title[0].islower() or
                              sections[i].title[0] in '('):
                 sections[i].title = f"{sections[i-1].title}" +\
                     f" {sections[i].title}"
