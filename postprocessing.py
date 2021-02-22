@@ -12,6 +12,7 @@ import re
 import regex
 import unicodedata
 from util import find_nearest_neighbour
+from keyword_search import model
 
 path = os.path.dirname(os.path.realpath('__file__'))
 

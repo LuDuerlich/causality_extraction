@@ -86,7 +86,6 @@ schema = Schema(id=ID(stored=True, unique=True),
                 sent_nb=NUMERIC(stored=True, sortable=True))
 
 
-
 def redefine_boundaries(sents):
     """correct sentence boundaries of spacy sentencizer
     based on rules for abbreviation and possessive markers
@@ -339,14 +338,14 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
                         additional terms to search for; e.g. 'klimatförendring'
                         (required: no)
        field (str):
-                        the field to search if none is specified, 'parsed_target' or
+                        the field to search if none is specified, 'target' or
                         'body' are searched depending on the schema
     """
 
     print('field:', field)
     if field is None:
-        if 'parsed_target' in ix.schema._fields:
-            field = 'parsed_target'
+        if 'target' in ix.schema._fields:
+            field = 'target'
         elif 'body' in ix.schema._fields:
             field = 'body'
         else:
@@ -379,7 +378,7 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
             xml.append(query)
             parsed_query = qp.parse(_query)
             r = s.search(parsed_query, terms=True, limit=None)
-            if field == 'parsed_target':
+            if field == 'target':
                 matches = []
                 print('results:', len(r))
                 for m in r:
@@ -551,31 +550,32 @@ def format_parsed_query(term_list, strict=False):
         terms = []
         for term in term_list:
             if '//' in term:
-                terms.append(Regex('parsed_target', fr"^{term}"))
+                terms.append(And([Regex('parsed_target', fr"^{term}"),
+                                  Regex('target', fr"^{term.split('//')[0]}")]
+                                 ))
             else:
-                terms.append(Regex('parsed_target', fr"^{term}//"))
+                terms.append(And([Regex('parsed_target', fr"^{term}//"),
+                                  Regex('target', fr"^{term}")]))
 
         return Or(terms)
-    return Or([Regex('parsed_target', term) for term in term_list])
+    return Or([And([Regex('parsed_target', term),
+                    Regex('target', term)]) for term in term_list])
 
 
 def format_simple_query(term_list):
-    return Or([Term('parsed_target', term) for term in term_list])
+    return Or([Term('target', term) for term in term_list])
 
 
 def format_keyword_queries(keywords, field, qp, slop=1):
     terms = []
     for keyword in keywords:
         if '"' in keyword:
-            # terms.append(Phrase(field, keyword.strip('"').split(), slop=slop))
-            terms.append(RegexPhrase(field,
-                                     [fr'^{term}//' for term in keyword.strip('"').split()],
-                                     slop=slop))
+            terms.append(Phrase(field, keyword.strip('"').split(), slop=slop))
         elif '//' in keyword:
             terms.append(And([format_parsed_query([keyword], True)[0],
                               Term(field, keyword.split('//')[0])]))
         else:
-            qp.parse(f'{field}:{keyword}')
+            terms.append(qp.parse(f'{field}:{keyword}'))
     return Or(terms)
 
 
@@ -629,8 +629,8 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                                     scorer=BasicFragmentScorer(),
                                     formatter=formatter)
     if field is None:
-        if 'parsed_target' in ix.schema._fields:
-            field = 'parsed_target'
+        if 'target' in ix.schema._fields:
+            field = 'target'
         elif 'body' in ix.schema._fields:
             field = 'body'
         else:
@@ -648,7 +648,7 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
     if query_expansion:
         prefix += 'extended_'
     if additional_terms:
-        if 'parsed_target' in ix.schema.names():
+        if 'target' in ix.schema.names():
             format_query = format_parsed_query
         else:
             format_query = format_simple_query
@@ -673,7 +673,7 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
         query = And([qp.parse(f'doc_title:{id_}'), _query])
         logger.info(f'Query: {query}')
         res = searcher.search(query, terms=True, limit=None)
-        if field == 'parsed_target':
+        if field == 'target':
             matches = []
             print(len(res))
             for m in res:
@@ -810,7 +810,7 @@ if __name__ == "__main__":
     match_counter = 0
     sec_counter = 0
     format_ = 'html'
-    for i, id_ in enumerate(ids):
+    for i, id_ in enumerate(ids[:1]):
         print(years[i], id_)
         # secs, matches = query_document(ix, id_, keywords=query_list,
         #                                year=years[i], format_=format_,
@@ -828,7 +828,7 @@ if __name__ == "__main__":
                                                        [list(topics)],
                                                        # [term for topic in
                                                        # topics for term in topic]],
-                                                       field='parsed_target',
+                                                       field='target',
                                                        query_expansion=True,
                                                        exp_factor=20,
                                                        prefix='pos_filtered_topics_only_',
