@@ -1,41 +1,73 @@
 #!/usr/bin/env python
-# from bs4 import BeautifulSoup
 # import re
 # from search_terms import filtered_expanded_dict
+from bs4 import BeautifulSoup
 import pickle
 import spacy
-model_path = 'spacy_model/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
+import os
+path = os.path.dirname(os.path.realpath('__file__'))
+model_path = f'{path}/spacy_model/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
 model = spacy.load(model_path)
 with open('BERT_topics.pickle', 'rb') as ifile:
     topic_terms = pickle.load(ifile)
 topics = [term for topic in topic_terms for term in topic]
 
 
-def find_tokens(markdown):
+def compute_path_length(hit, parsed_text):
+    caus, top = find_tokens(BeautifulSoup(hit),
+                            parsed_text)
+    shortest = None
+    tokens = [None, None]
+    parsed_text = parsed_text.split()
+    deps_to_heads = {i: int(el.split('//')[-1]) for i, el
+                     in enumerate(parsed_text)}
+    heads_to_deps = {}
+    for dep, head in deps_to_heads.items():
+        if head not in heads_to_deps:
+            heads_to_deps[head] = []
+        heads_to_deps[head].append(dep)
+    for c in caus:
+        if shortest == 1:
+            break
+        c_ix = parsed_text.index(c)
+        for t in top:
+            path = find_path(c_ix,
+                             parsed_text.index(t),
+                             deps_to_heads, heads_to_deps)
+            if path and (shortest is None or shortest > path):
+                shortest = path
+                tokens = [t, c]
+                if path == 1:
+                    break
+    return shortest, tokens
+
+
+def find_tokens(markdown, parsed_text):
     """
     match causality and topic terms to the respective spacy tokens
     """
 
-    text = markdown.b.get_text(" ", strip=True)
+    # text = markdown.b.get_text(" ", strip=True)
     causality_hits, topic_hits = split_keywords(markdown)
     causality_tok = []
-
     topic_tok = []
 
-    doc = model(text)
-    for i, token in enumerate(doc):
+    # doc = model(text)
+    parsed_text = parsed_text.split()
+    for i, token in enumerate(parsed_text):
         if len(causality_tok) < len(causality_hits):
             for context in causality_hits:
                 left_context, term, right_context = context.split(',')
-                if term == token.text.strip(','):
-
+                if term == token.split('//')[0]:
                     # check left context
-                    if left_context and doc[max(0, i-1)].text != left_context:
+                    if left_context and\
+                       parsed_text[max(0, i-1)].split('//')[0] != left_context:
                         continue
 
                     # check right context
                     if right_context and \
-                       doc[min(i+1, len(doc))].text != right_context:
+                       parsed_text[min(i+1, len(parsed_text))].split('//')[0]\
+                       != right_context:
                         continue
 
                     causality_tok.append(token)
@@ -43,7 +75,7 @@ def find_tokens(markdown):
         if len(topic_tok) < len(topic_hits):
             for term in topic_hits:
                 term = term.split(',')[1]
-                if term in token.text:
+                if term in token.split('//')[0]:
                     topic_tok.append(token)
                     continue
     return causality_tok, topic_tok
@@ -74,11 +106,9 @@ def shortest_path(causality_tokens, topic_tokens):
     for caus in causality_tokens:
         for top in topic_tokens:
             length = count_path(caus, top)
-            print(length)
             if length == 0:
                 return 0
             elif not path_length or length < path_length:
-                print(f'update path: {length}')
                 path_length = length
     return path_length
 
@@ -100,61 +130,84 @@ def count_path(causality_tok, topic_tok):
     return distance, is_root
 
 
-def _path(t1, t2):
+def find_path(t1, t2, deps_to_heads, heads_to_deps):
     """
     find the path between two tokens.
     """
     path = 0
     # check if one of the terms is direct or indirect
     # head of the other
-    path, is_connection = _check_children(t1, t2)
+    path, is_connection = _check_dependants(t1, t2,
+                                            deps_to_heads,
+                                            heads_to_deps)
     if is_connection:
         return path
-    path, is_connection = _check_children(t2, t1)
+
+    path, is_connection = _check_dependants(t2, t1,
+                                            deps_to_heads,
+                                            heads_to_deps)
     if is_connection:
         return path
+
     # check if they share a parent
-    path, is_connection = _check_parent(t1, t2)
+    path, is_connection = _check_head(t1, t2,
+                                      deps_to_heads,
+                                      heads_to_deps)
+
     if is_connection:
         return path
 
 
-def _check_parent(t1, t2):
+def _check_head(t1, t2, deps_to_heads, heads_to_deps):
     """
     check if t1 and t2 share the same ancestor
     and calculate the lenght of the path between
     them.
     """
-    parent = t1.head
-    if parent == t1:
-        return 0, 0
-    path, found = _check_children(parent, t2, t1)
-    if found:
-        return path + 1, found
-    else:
-        path, found = _check_parent(parent, t2)
+    head = t1
+    previous = None
+    path, found = None, None
+    nb_heads = 0
+    while not found:
+        previous = head
+        head = deps_to_heads[head]
+        nb_heads += 1
+        if head == previous:
+            return 0, 0
+
+        path, found = _check_dependants(head, t2,
+                                        deps_to_heads,
+                                        heads_to_deps,
+                                        previous)
         if found:
-            path += 1
+            path += nb_heads
+
     return path, found
 
 
-def _check_children(t1, t2, stop=None):
+def _check_dependants(t1, t2, deps_to_heads, heads_to_deps, stop=None):
     """
-    check if t2 is descendant of t1 and
+    check if t2 is dependant of t1 and
     calculate path length.
     """
-    children = list(t1.children)
     path = 0
     found = 0
     if stop and stop == t1:
         return path, found
+
     if t1 == t2:
         return 0, 1
-    for child in children:
-        path, found = _check_children(child, t2)
-        if found:
-            path += 1
-            break
+
+    if t1 in heads_to_deps:
+        for dep in heads_to_deps[t1]:
+
+            if dep != t1:
+                path, found = _check_dependants(dep, t2, deps_to_heads,
+                                                heads_to_deps, stop)
+            if found:
+                path += 1
+
+                break
     return path, found
 
 
