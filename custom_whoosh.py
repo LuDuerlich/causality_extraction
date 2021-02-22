@@ -48,9 +48,6 @@ class RegexPhrase(Phrase):
                 return matching.NullMatcher()
 
             terms[i] = []
-            # if (fieldname, word) not in reader:
-                # Shortcut the query if one of the words doesn't exist.
-                # return matching.NullMatcher()
             for fname, fword in reader._terms.terms():
                 if fname == fieldname:
                     if re.search(word, fword):
@@ -59,7 +56,6 @@ class RegexPhrase(Phrase):
         m = []
         max_score = 0
         # create possible term combinations
-        # print(list(product(*[terms[i] for i in range(len(terms))])))
         count = 0
         for combination in product(*[terms[i] for i in range(len(terms))]):
             # Create the equivalent SpanNear2 query from the terms
@@ -73,23 +69,12 @@ class RegexPhrase(Phrase):
                 matcher = q.matcher(searcher, context)
             if matcher and matcher.is_active():
                 m.append(matcher)
-                #score = matcher.score()
-                #if score > max_score:
-                #    max_score = score
-                # print(combination, m[-1])
-        # TODO we still need to combined them
-        # doccount = searcher.doc_count_all()
-        print(f'{count} combinations')
-        #return m
-        # m = matching.ArrayUnionMatcher(m, doccount)
         # Get the matcher
         if m:
             doccount = searcher.doc_count_all()
             m = matching.ArrayUnionMatcher(m, doccount)
-            #m = matching.MultiMatcher(m, list(range(len(m))), scorer=WeightScorer(score))
         else:
             m = matching.NullMatcher()
-        # m = SplitOr._matcher( 
         return m
 
 
@@ -308,8 +293,8 @@ class CustomHighlighter(Highlighter):
             tokens.sort(key=lambda t: t.startchar)
             tokens = [max(group, key=lambda t: t.endchar - t.startchar)
                       for key, group in groupby(tokens, lambda t: t.startchar)]
-            if fieldname == 'parsed_target':
-                text = [[hitobj['left_context'], hitobj['parsed_target'],
+            if fieldname == 'target':
+                text = [[hitobj['left_context'], hitobj['target'],
                          hitobj['right_context']]]
                 fragments = self.fragmenter.fragment_tokens(text,
                                                             tokens,
@@ -331,8 +316,8 @@ class CustomHighlighter(Highlighter):
             else:
                 tokens = set_matched_filter(tokens, words)
             tokens = self._merge_matched_tokens(tokens)
-            if fieldname == 'parsed_target':
-                text = [hitobj['left_context'], hitobj['parsed_target'],
+            if fieldname == 'target':
+                text = [hitobj['left_context'], hitobj['target'],
                         hitobj['right_context']]
                 fragments = self.fragmenter.fragment_tokens(text,
                                                             tokens,
