@@ -52,7 +52,7 @@ def setup_log(name, logname):
 
 
 logger = setup_log('whoosh_logger', logname)
-
+logger.propagate = False
 model_path = f'{path}/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
 if not os.path.exists(model_path):
     model_path = f'{path}/spacy_model/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
@@ -86,18 +86,22 @@ schema = Schema(id=ID(stored=True, unique=True),
                 sent_nb=NUMERIC(stored=True, sortable=True))
 
 
-def redefine_boundaries(sents):
+def redefine_boundaries(doc):
     """correct sentence boundaries of spacy sentencizer
-    based on rules for abbreviation and possessive markers
+    based on rules for abbreviation and possessive markers.
+    returns the new sentences as strings and a list of lists
+    of corresponding indeces on the document.
     Parameters:
-               sents (spacy.tokens.span.Span):
-                           a spacy sents generator of Span objects
+               doc (spacy.tokens.doc.Doc):
+                           a spacy Doc object representing the
+                           annotated text
     """
 
-    ents = [str(ent) for ent in sents.ents]
-    sents = list(sents.sents)
+    ents = [str(ent) for ent in doc.ents]
+    sents = list(doc.sents)
     abr_exp = re.compile(r"(m\.m|osv|etc)\.")
     poss_exp = re.compile(r"\b[A-ZÄÖÅ0-9]+\b:$")
+    token_sents = [[tok for tok in sent] for sent in sents]
     for i in range(len(sents)):
         if i+1 >= len(sents):
             break
@@ -106,7 +110,7 @@ def redefine_boundaries(sents):
             if type(sents[i]) == Span:
                 tokens = list(sents[i].__iter__())
             else:
-                tokens = sents[i].split()
+                tokens = [token_sents[i]]#sents[i].split()
             last = None
             while has_abbrev:
                 nb_abbr = len(has_abbrev)
@@ -118,11 +122,16 @@ def redefine_boundaries(sents):
                            (str(tokens[j+1]).istitle() and
                             str(tokens[j+1]) not in ents):
                             has_abbrev.pop(-1)
-                            new_s = " ".join(
-                                [str(tok) for tok in tokens[j+1:]])
+                            new_s = " ".join([str(tok) for tok in tokens[j+1:]])
+
                             following = sents[i+1:]
+                            following_token_sents = token_sents[i+1:]
                             sents[i] = " ".join(
                                 [str(tok) for tok in tokens[:j+1]])
+                            token_sents[i] = [tok_i for tok_i in tokens[:j+1]]
+                            token_sents[i+1] = [tok_i for tok_i in tokens[j+1:]]
+                            token_sents = token_sents[:i+2]
+                            token_sents.extend(following_token_sents)
                             sents[i+1] = new_s
                             sents = sents[:i+2]
                             sents.extend(following)
@@ -139,15 +148,24 @@ def redefine_boundaries(sents):
             sents[i] = re.sub(r" ([.,;:!?])", r"\1",
                               str(sents[i]) + str(sents[i+1]))
             del sents[i+1]
+            token_sents[i].extend(token_sents[i+1])
+            del token_sents[i+1]
         else:
             sents[i] = re.sub(r" ([.,;:!?])", r"\1", str(sents[i]))
-
         # sentences that start with parentheses are split at open parentheses
         if str(sents[i]).endswith("(") and i + 1 < len(sents):
+            len_before = len(sents[i])
+            removed = list(sents[i])
             sents[i] = str(sents[i]).rstrip(' (')
+            removed = list(filter(lambda x: x != ' ',
+                             removed[-(len_before - len(sents[i])):]))
+            if removed:
+                additions = token_sents[i][-1*len(removed):]
+                token_sents[i] = token_sents[i][:-1*len(removed)]
+                token_sents[i+1] = additions + token_sents[i+1]
             sents[i+1] = '(' + str(sents[i+1]).lstrip()
         sents = [str(s) for s in sents]
-    return sents
+    return sents, token_sents
 
 
 def strip_tags(string):
@@ -252,9 +270,18 @@ def create_index(path_=f"{path}/test_index/", ixname="test",
                         ifile.extractfile(
                             f"documents/s_{key}.html"
                         ).read())
+                # add date
+                if hasattr(datetime.datetime, 'fromisoformat'):
+                    date = datetime.datetime.fromisoformat(
+                        ids_to_date[key][0][1])
+                else:
+                    year, month, day = ids_to_date[key][0][1].split('-')
+                    date = datetime.datetime(int(year), int(month), int(day))
+
                 for j, section in enumerate(text):
+                    title = re.sub(r'\s+', ' ', section.title)
                     document = model(" ".join(section.text))
-                    sents = redefine_boundaries(document)
+                    sents, token_sents = redefine_boundaries(document)
                     # parsed_sents = model(sents)
                     for k, sent in enumerate(sents):
                         left_ctxt = ['']
@@ -270,28 +297,19 @@ def create_index(path_=f"{path}/test_index/", ixname="test",
                             else:
                                 right_ctxt = sents[k+1:min(len(sents), k+1+n)]
                         target = str(sents[k])
-                        title = re.sub(r'\s+', ' ', section.title)
+
                         # apparently, whoosh does not preserve newlines, so we have
                         # to mark sentence boundaries another way
 
                         right_ctxt = re.sub(r'\s+', ' ', "###".join(right_ctxt))
                         left_ctxt = re.sub(r'\s+', ' ', "###".join(left_ctxt))
 
-                        # add date
-                        if hasattr(datetime.datetime, 'fromisoformat'):
-                            date = datetime.datetime.fromisoformat(
-                                ids_to_date[key][0][1])
-                        else:
-                            year, month, day = ids_to_date[key][0][1].split('-')
-                            date = datetime.datetime(int(year), int(month), int(day))
-
-                        # To Do: parse all sentences in one go
                         if parse:
-                            parsed_target = " ".join(['//'.join([token.text,
-                                                                 token.tag_,
-                                                                 token.dep_,
-                                                                 str(token.head.i)])
-                                                      for token in model(target)])
+                            parsed_target = " ".join(['//'.join([tok.text,
+                                                                 tok.tag_,
+                                                                 tok.dep_,
+                                                                 str(tok.head.i)])
+                                                      for tok in token_sents[k]]) #model(target)])
                             writer.add_document(id=".".join([str(nb) for nb in (key,j,k)]),
                                                 doc_title=key,
                                                 date=date,
@@ -582,7 +600,7 @@ def format_keyword_queries(keywords, field, qp, slop=1):
 def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                    format_='xml', year='', additional_terms=[],
                    field=None, context_size=2, query_expansion=False,
-                   exp_factor=3, prefix="", slop=1):
+                   exp_factor=3, prefix="", slop=1, additional_filter=[]):
     """search for matches within one document
     Parameters:
                ix (FileIndex):
@@ -620,6 +638,8 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
                slop (int):
                   slop factor for phrase queries (i.e. how many tokens
                   are allowed in between phrase constituents)
+               additional_filter (list):
+                  an additional list of filter words (e.g. [increase, decrease])
 
     """
     sentf = CustomSentenceFragmenter(maxchars=1000,
@@ -646,33 +666,34 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
     _query = format_keyword_queries(keywords, field, qp, slop)
     prefix = f'{prefix}{id_}_{year}_'
     if query_expansion:
-        prefix += 'extended_'
+        prefix += 'expanded_'
     if additional_terms:
         if 'target' in ix.schema.names():
             format_query = format_parsed_query
         else:
             format_query = format_simple_query
-        for i, term_list in enumerate(additional_terms):
-            if i > 0:
-                if query_expansion:
-                    term_list_ = []
-                    for term in term_list:
-                        term_list_.append([nn.replace('##', '\\B')
-                                           for nn, sim in
-                                           find_nearest_neighbour(term,
-                                                                  exp_factor)])
-                    additional_terms[i].append(term_list_)
-                    terms = Or([format_query(q) for q in term_list_])
-                else:
-                    terms = format_query(term_list)
-            else:
-                terms = format_query(term_list, strict=True)
-            if terms:
-                _query = And([terms, _query])
+        term_list = []
+        if query_expansion:
+            for i, term in enumerate(additional_terms):
+                term_list.append([nn.replace('##', '\\B')
+                                  for nn, sim in
+                                  find_nearest_neighbour(term,
+                                                        exp_factor)])
+                additional_terms[i] = term_list[-1]
+            print(term_list)
+            terms = Or([format_query(list_) for list_ in term_list])
+        else:
+            terms = Or([format_query(term) for term in additional_terms])
+        if additional_filter:
+            terms = format_query(additional_filter, strict=True)
+        if terms:
+            _query = And([terms, _query])
     with ix.searcher() as searcher:
-        query = And([qp.parse(f'doc_title:{id_}'), _query])
+        query = _query  # And(_query)
+        filter = qp.parse(f'doc_title:{id_}')
         logger.info(f'Query: {query}')
-        res = searcher.search(query, terms=True, limit=None)
+        res = searcher.search(query, terms=True, limit=None, filter=filter)
+        logger.info(f'search took {res.runtime:>1.6} s')
         if field == 'target':
             matches = []
             print(len(res))
@@ -742,18 +763,10 @@ def query_document(ix, id_="GIB33", keywords=['"bero på"', 'förorsaka'],
         if format_ == 'xml':
             head.append(sec)
     if additional_terms:
-        if len(additional_terms) > 1:
+        if additional_terms:
             with open(f'{path}/document_search/' +
-                      f'{prefix}_incr_decr_custom' +
+                      f'{prefix}' +
                       f'_document_search.{format_}',
-                      'w') as ofile:
-                if format_ == 'html':
-                    ofile.write(output.prettify(formatter='html5'))
-                else:
-                    ofile.write(output.prettify())
-        else:
-            with open(f'{path}/document_search/' +
-                      f'{prefix}_incr_decr_document_search.{format_}',
                       'w') as ofile:
                 if format_ == 'html':
                     ofile.write(output.prettify(formatter='html5'))
@@ -810,7 +823,8 @@ if __name__ == "__main__":
     match_counter = 0
     sec_counter = 0
     format_ = 'html'
-    for i, id_ in enumerate(ids[:1]):
+    expanded_terms = []
+    for i, id_ in enumerate(ids):
         print(years[i], id_)
         # secs, matches = query_document(ix, id_, keywords=query_list,
         #                                year=years[i], format_=format_,
@@ -820,19 +834,31 @@ if __name__ == "__main__":
         #                               year=years[i], format_=format_,
         #                               additional_terms=[decr_terms],
         #                               field='target')
-        secs, matches, expanded_terms = query_document(ix, id_,
-                                                       keywords=tagged_list,
-                                                       year=years[i],
-                                                       format_=format_,
-                                                       additional_terms=[[]] +
-                                                       [list(topics)],
-                                                       # [term for topic in
-                                                       # topics for term in topic]],
-                                                       field='target',
-                                                       query_expansion=True,
-                                                       exp_factor=20,
-                                                       prefix='pos_filtered_topics_only_',
-                                                       slop=1)
+        if expanded_terms:
+            secs, matches, _ = query_document(ix, id_,
+                                              keywords=tagged_list,
+                                              year=years[i],
+                                              format_=format_,
+                                              additional_terms=expanded_terms,
+                                              field='target',
+                                              query_expansion=False,
+                                              prefix='pos_filtered_topics_only_',
+                                              slop=1)
+
+
+        else:
+            start = time.time()
+            secs, matches, expanded_terms = query_document(ix, id_,
+                                                           keywords=tagged_list,
+                                                           year=years[i],
+                                                           format_=format_,
+                                                           additional_terms=list(topics),
+                                                           field='target',
+                                                           query_expansion=True,
+                                                           exp_factor=15,
+                                                           prefix='pos_filtered_topics_only_',
+                                                           slop=1)
+            print('took', time.time()-start)
 
         # secs, matches, expanded_terms = query_document(ix, id_, keywords=query_list,
         #                                year=years[i], format_=format_,

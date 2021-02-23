@@ -27,7 +27,6 @@ class RegexPhrase(Phrase):
     def matcher(self, searcher, context=None):
         from whoosh.query import Term, SpanNear2
         from whoosh import matching
-        from whoosh.scoring import WeightScorer
 
         fieldname = self.fieldname
         if fieldname not in searcher.schema:
@@ -54,13 +53,10 @@ class RegexPhrase(Phrase):
                         terms[i].append(Term(fieldname, fword))
 
         m = []
-        max_score = 0
         # create possible term combinations
-        count = 0
         for combination in product(*[terms[i] for i in range(len(terms))]):
             # Create the equivalent SpanNear2 query from the terms
             q = SpanNear2(combination, slop=self.slop, ordered=True, mindist=1)
-            count += 1
             if self.boost != 1.0:
                 matcher = matching.WrappingMatcher(q.matcher(searcher,
                                                              context),
@@ -114,10 +110,13 @@ def set_matched_filter_phrases_(tokens, text, terms, phrases, analyzer):
             if phrase.words[0] == text[i]:  # If first word matched
                 if slop == 1:
                     # Simple substring match
-                    if text[i + 1:i + n_phrase_words] == phrase.words[1:]:  # If rest of phrase matches
-                        any(map(matches.add, range(i, i + n_phrase_words)))  # Collect matching indices
+                    if text[i + 1:i + n_phrase_words] == phrase.words[1:]:
+                        # If rest of phrase matches
+                        any(map(matches.add, range(i, i + n_phrase_words)))
+                        # Collect matching indices
                         # Advance past match area.
-                        # Choosing to ignore possible overlapping matches for efficiency due to low probability.
+                        # Choosing to ignore possible overlapping matches
+                        # for efficiency due to low probability.
                         i += n_phrase_words
                     else:
                         i += 1
@@ -294,11 +293,16 @@ class CustomHighlighter(Highlighter):
             tokens = [max(group, key=lambda t: t.endchar - t.startchar)
                       for key, group in groupby(tokens, lambda t: t.startchar)]
             if fieldname == 'target':
-                text = [[hitobj['left_context'], hitobj['target'],
-                         hitobj['right_context']]]
+                if 'left_context' in schema.names():
+                    text = [[hitobj['left_context'], hitobj['target'],
+                             hitobj['right_context']]]
+                    split_fields = True
+                else:
+                    text = hitobj['target']
+                    split_ = False
                 fragments = self.fragmenter.fragment_tokens(text,
                                                             tokens,
-                                                            split_fields=True)
+                                                            split_fields=split_)
             else:
                 fragments = self.fragmenter.fragment_matches(text, tokens)
         else:
@@ -317,11 +321,16 @@ class CustomHighlighter(Highlighter):
                 tokens = set_matched_filter(tokens, words)
             tokens = self._merge_matched_tokens(tokens)
             if fieldname == 'target':
-                text = [hitobj['left_context'], hitobj['target'],
-                        hitobj['right_context']]
+                if 'left_context' in schema.names():
+                    text = [[hitobj['left_context'], hitobj['target'],
+                             hitobj['right_context']]]
+                    split_fields = True
+                else:
+                    split_fields = False
+                    text = hitobj['target']
                 fragments = self.fragmenter.fragment_tokens(text,
                                                             tokens,
-                                                            split_fields=True)
+                                                            split_fields=split_)
             else:
                 fragments = self.fragmenter.fragment_tokens(text, tokens)
         fragments = top_fragments(fragments, top, self.scorer, self.order,
@@ -472,6 +481,7 @@ class CustomSentenceFragmenter(Fragmenter):
         self.context_size = context_size
 
     def fragment_tokens(self, text, tokens, split_fields=False):
+        print(text)
         maxchars = self.maxchars
         sentencechars = self.sentencechars
         charlimit = self.charlimit
