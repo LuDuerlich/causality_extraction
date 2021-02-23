@@ -188,6 +188,6 @@ def test_redefine_boundaries():
             'Det gäller at övertyga EU:s befolkning.',
             '(1) Ibland har SpaCy problem med parenteser.']
     spacy_doc = model(' '.join(sents))
-    new_boundaries = redefine_boundaries(spacy_doc)
+    new_boundaries, tokens = redefine_boundaries(spacy_doc)
     assert list(spacy_doc.sents) != sents
     assert new_boundaries == sents

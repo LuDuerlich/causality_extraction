@@ -36,16 +36,6 @@ kan <b>resultera</b> i reaktioner som <b>bidrar</b> <b>till</b> negativa känslo
                      ['(som)? *bidrar', ' *till']]
 
 
-def test_redefine_boundaries():
-    sents = ['Det här är en mening!',
-            'Det gäller at övertyga EU:s befolkning.',
-            '(1) Ibland har SpaCy problem med parenteser.']
-    spacy_doc = model(' '.join(sents))
-    new_boundaries = redefine_boundaries(spacy_doc)
-    assert list(spacy_doc.sents) != sents
-    assert new_boundaries == sents
-
-
 def test_search():
     markup = '<match>Det skulle kunna motverka den stigande arbetslösheten.\
 <b>Både sjukvårds- och miljöfrågor ...</b>\
