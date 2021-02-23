@@ -296,7 +296,7 @@ class CustomHighlighter(Highlighter):
                 if 'left_context' in schema.names():
                     text = [[hitobj['left_context'], hitobj['target'],
                              hitobj['right_context']]]
-                    split_fields = True
+                    split_ = True
                 else:
                     text = hitobj['target']
                     split_ = False
@@ -324,9 +324,9 @@ class CustomHighlighter(Highlighter):
                 if 'left_context' in schema.names():
                     text = [[hitobj['left_context'], hitobj['target'],
                              hitobj['right_context']]]
-                    split_fields = True
+                    split_ = True
                 else:
-                    split_fields = False
+                    split_ = False
                     text = hitobj['target']
                 fragments = self.fragmenter.fragment_tokens(text,
                                                             tokens,

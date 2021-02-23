@@ -387,29 +387,34 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
         soup = BeautifulSoup('', features='lxml')
         xml = soup.new_tag("xml")
         soup.append(xml)
+        if not isinstance(terms[0], list):
+            terms = [terms]
+        kw_query = format_keyword_queries(keywords, field, qp, slop=2)
         for term in terms:
             if term:
-                _query = f"{term} AND ({'~2 OR '.join(keywords)})"
+                _terms = format_parsed_query(term)
+                parsed_query = And([kw_query, _terms])
             else:
-                _query = '~2 OR '.join(keywords)
-            query = soup.new_tag('query', term=f'{_query}')
+                parsed_query = kw_query
+
+            query = soup.new_tag('query', term=f'{parsed_query}')
             xml.append(query)
-            parsed_query = qp.parse(_query)
             r = s.search(parsed_query, terms=True, limit=None)
+            logger.log(f'search took {r.runtime} s')
             if field == 'target':
                 matches = []
                 print('results:', len(r))
                 for m in r:
                     hits = highlighter.highlight_hit(
                         m, field, top=len(m.results),
-                        strict_phrase='"' in _query)
+                        strict_phrase=True)
                     for hit, start_pos in hits:
                         matches.append((hit, m, m['sent_nb']))
             else:
                 matches = [(hit[0], m, hit[-1]) for m in r
                            for hit in highlighter.highlight_hit(
                                    m, field, top=len(m.results),
-                                   strict_phrase='"' in _query)]
+                                   strict_phrase=True)]
 
             for i, matched_s in enumerate(matches):
                 query.append(BeautifulSoup(format_match(matched_s[:-1], i),
