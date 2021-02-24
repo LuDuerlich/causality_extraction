@@ -387,39 +387,39 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
         soup = BeautifulSoup('', features='lxml')
         xml = soup.new_tag("xml")
         soup.append(xml)
-        if not isinstance(terms[0], list):
-            terms = [terms]
+        # if not isinstance(terms[0], list):
+        #    terms = [terms]
         kw_query = format_keyword_queries(keywords, field, qp, slop=2)
-        for term in terms:
-            if term:
-                _terms = format_parsed_query(term)
-                parsed_query = And([kw_query, _terms])
-            else:
-                parsed_query = kw_query
+        if terms[0]:
+            _terms = format_parsed_query(terms)
+            parsed_query = And([kw_query, _terms])
+        else:
+            parsed_query = kw_query
 
-            query = soup.new_tag('query', term=f'{parsed_query}')
-            xml.append(query)
-            r = s.search(parsed_query, terms=True, limit=None)
-            logger.log(f'search took {r.runtime} s')
-            if field == 'target':
-                matches = []
-                print('results:', len(r))
-                for m in r:
-                    hits = highlighter.highlight_hit(
-                        m, field, top=len(m.results),
-                        strict_phrase=True)
-                    for hit, start_pos in hits:
-                        matches.append((hit, m, m['sent_nb']))
-            else:
-                matches = [(hit[0], m, hit[-1]) for m in r
-                           for hit in highlighter.highlight_hit(
-                                   m, field, top=len(m.results),
-                                   strict_phrase=True)]
+        query = soup.new_tag('query', term=f'{parsed_query}')
+        xml.append(query)
+        logger.info(f'QUERY: {parsed_query.__repr__()}')
+        r = s.search(parsed_query, terms=True, limit=None, filter=qp.parse('doc_title:GOB345d1'))
+        logger.info(f'search took {r.runtime} s')
+        if field == 'target':
+            matches = []
+            print('results:', len(r))
+            for m in r:
+                hits = highlighter.highlight_hit(
+                    m, field, top=len(m.results),
+                    strict_phrase=True)
+                for hit, start_pos in hits:
+                    matches.append((hit, m, m['sent_nb']))
+        else:
+            matches = [(hit[0], m, hit[-1]) for m in r
+                       for hit in highlighter.highlight_hit(
+                               m, field, top=len(m.results),
+                               strict_phrase=True)]
 
-            for i, matched_s in enumerate(matches):
-                query.append(BeautifulSoup(format_match(matched_s[:-1], i),
-                                           features='lxml'))
-                # matched_s.results.order = FIRST
+        for i, matched_s in enumerate(matches):
+            query.append(BeautifulSoup(format_match(matched_s[:-1], i),
+                                       features='lxml'))
+            # matched_s.results.order = FIRST
         output.write(soup.prettify())
 
 

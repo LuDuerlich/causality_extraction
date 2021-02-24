@@ -481,12 +481,13 @@ class CustomSentenceFragmenter(Fragmenter):
         self.context_size = context_size
 
     def fragment_tokens(self, text, tokens, split_fields=False):
-        print(text)
         maxchars = self.maxchars
         sentencechars = self.sentencechars
         charlimit = self.charlimit
         context = self.context_size
         if split_fields:
+            if len(text) == 1 and isinstance(text[0], list):
+                text = text[0]
             # left context
             left_text = text[0].split("###")
             left_c = "\n".join(left_text[max(0, len(left_text)-context):])
