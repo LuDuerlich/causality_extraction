@@ -1,8 +1,12 @@
+from bs4 import BeautifulSoup
 from whoosh.highlight import *
 from whoosh.analysis import StandardAnalyzer
 from whoosh.query import CompoundQuery, Phrase, SplitOr
 from itertools import product
 import re
+
+soup = BeautifulSoup(features='lxml')
+
 
 class RegexPhrase(Phrase):
     def __init__(self, fieldname, words, slop=1, boost=1.0, char_ranges=None):
@@ -313,8 +317,8 @@ class CustomHighlighter(Highlighter):
 
             # Set Token.matched attribute for tokens that match a query term
             if strict_phrase:
-                # terms, phrases = results.q.phrases()
-                terms, phrases = separate_query_terms(results.q, results)
+                terms, phrases = results.q.phrases()
+                # terms, phrases = separate_query_terms(results.q, results)
                 tokens = set_matched_filter_phrases_(tokens, text, terms,
                                                      phrases, self.analyzer)
             else:
@@ -333,8 +337,8 @@ class CustomHighlighter(Highlighter):
                                                             split_fields=split_)
             else:
                 fragments = self.fragmenter.fragment_tokens(text, tokens)
-        fragments = top_fragments(fragments, top, self.scorer, self.order,
-                                  minscore=minscore)
+        # fragments = top_fragments(fragments, top, self.scorer, self.order,
+        #                          minscore=minscore)
         output = self.formatter.format(fragments)
         return output
 
@@ -409,22 +413,22 @@ class CustomFormatter(Formatter):
         text = fragment.text
         index = fragment.sent_boundaries[0]
         match_s_end = fragment.sent_boundaries[-1]
-        output = [self._text(text[fragment.startchar:index])]
-        output.append("<b>")
+        output = soup.new_tag('match')
+        output.append(self._text(text[fragment.startchar:index]))
+        output.append(soup.new_tag("b"))
         for t in fragment.matches:
             if t.startchar is None:
                 continue
             if t.startchar < index:
                 continue
             if t.startchar > index:
-                output.append(self._text(text[index:t.startchar]))
-            output.append(self.format_token(text, t, replace))
+                output.b.append(self._text(text[index:t.startchar]))
+            output.b.append(self.format_token(text, t, replace))
             index = t.endchar
-        output.append(self._text(text[index:match_s_end+1]))
-        output.append("</b>")
+        output.b.append(self._text(text[index:match_s_end+1]))
         output.append(self._text(text[match_s_end+1:fragment.endchar+1]))
         # print('formatted:', "".join(output), fragment.sent_boundaries[0])
-        return "".join(output), fragment.sent_boundaries[0]
+        return output, fragment.sent_boundaries[0]#"".join(output), fragment.sent_boundaries[0]
 
     def format(self, fragments, replace=False):
         """Returns a bold formatted version of the given text, using a list of
@@ -436,7 +440,9 @@ class CustomFormatter(Formatter):
         return formatted
 
     def format_token(self, text, token, replace=False):
-        return f"<em>{get_text(text, token, replace)}</em>"
+        em = soup.new_tag('em')
+        em.append(get_text(text, token, replace))
+        return em
 
 
 def mksentfrag(text, tokens, startchar=None, endchar=None,

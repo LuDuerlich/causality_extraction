@@ -33,7 +33,7 @@ path = os.path.realpath('__file__').strip('__file__')
 for handler in logging.root.handlers[:]:
     logging.root.removeHandler(handler)
 
-logname = f'{datetime.datetime.now()}_keyword_search.log'
+logname = 'keyword_search_'
 
 
 def setup_log(name, logname):
@@ -51,7 +51,7 @@ def setup_log(name, logname):
     return logger
 
 
-logger = setup_log('whoosh_logger', logname)
+logger = setup_log('search', logname)
 logger.propagate = False
 model_path = f'{path}/sv_model_xpos/sv_model0/sv_model0-0.0.0/'
 if not os.path.exists(model_path):
@@ -344,7 +344,7 @@ def create_index(path_=f"{path}/test_index/", ixname="test",
         writer.commit()
 
 
-def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
+def print_to_file(ix=ix, keywords=["orsak", '"bidrar till"'], terms=[""], field=None, prefix=''):
     """Print all examples matching the  query term to an XML file.
 
     Parameters:
@@ -378,10 +378,10 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
                                     scorer=BasicFragmentScorer(),
                                     formatter=formatter)
 
-    filename = "example_queries_inflected.xml"
+    filename = f"{prefix}example_queries_inflected.xml"
     print("Index:", ix, field)
     if terms[0]:
-        filename = f"{terms[0]}_example_queries_inflected.xml"
+        filename = f"{prefix}{terms[0]}_example_queries_inflected.xml"
     with ix.searcher() as s,\
          open(filename, "w") as output:
         soup = BeautifulSoup('', features='lxml')
@@ -399,28 +399,32 @@ def print_to_file(keywords=["orsak", '"bidrar till"'], terms=[""], field=None):
         query = soup.new_tag('query', term=f'{parsed_query}')
         xml.append(query)
         logger.info(f'QUERY: {parsed_query.__repr__()}')
-        r = s.search(parsed_query, terms=True, limit=None, filter=qp.parse('doc_title:GOB345d1'))
+        r = s.search(parsed_query, terms=True, limit=None)#, filter=qp.parse('doc_title:GOB345d1'))
         logger.info(f'search took {r.runtime} s')
         if field == 'target':
-            matches = []
             print('results:', len(r))
             for m in r:
                 hits = highlighter.highlight_hit(
                     m, field, top=len(m.results),
                     strict_phrase=True)
                 for hit, start_pos in hits:
-                    matches.append((hit, m, m['sent_nb']))
+                     output.write(format_match((hit, m), start_pos).prettify())
+                     #query.append()
+                    # query.append(BeautifulSoup(format_match((hit, m),
+                    #                                        start_pos),
+                    #                           features='lxml').match)
         else:
-            matches = [(hit[0], m, hit[-1]) for m in r
-                       for hit in highlighter.highlight_hit(
+            for m in r:
+                hits = highlighter.highlight_hit(
                                m, field, top=len(m.results),
-                               strict_phrase=True)]
-
-        for i, matched_s in enumerate(matches):
-            query.append(BeautifulSoup(format_match(matched_s[:-1], i),
-                                       features='lxml'))
+                               strict_phrase=True)
+                for hit, start_pos in hits:
+                    query.append(format_match((hit, m), start_pos))
             # matched_s.results.order = FIRST
-        output.write(soup.prettify())
+    logger.info('writing to output file')
+    print('writing to output file')
+
+       # output.write(soup.prettify())
 
 
 def print_sample_file(keywords=expanded_dict, same_matches=None):
@@ -548,24 +552,21 @@ def format_match(match, match_nb, org_num=None, format_='xml'):
     elif format_ == 'html':
         tag = 'p'
 
-    title = match[1]['doc_title']
-    sec_title = match[1]['sec_title']
-    xml_match = f"<{tag} match_nb='{match_nb}"
+    match[0]['doc'] = match[1]['doc_title']
+    match[0]['section'] = match[1]['sec_title']
+    match[0]['match_nb'] = match_nb
     if org_num:
-        xml_match += f"({org_num})' "
-    else:
-        xml_match += "' "
-    xml_match += (f"doc='{strip_tags(title)}' " +
-                  f"section='{sec_title}'>")
+        match[0]['match_nb'] += f"({org_num})"
+
     # remove keyword markup
     # hit = re.sub(r'</?b>', '', match[0])
-    hit = match[0]
+    #hit = match[0]
     # remove tags
-    hit = ' '.join([token.split('//')[0] for token in hit.split()])
+    #hit = ' '.join([token.split('//')[0] for token in hit.split()])
     # print(hit)
-    xml_match += re.sub(r' ([?.,:;!])', r'\1', hit)
-    xml_match += f"</{tag}>"
-    return xml_match
+    #match[0] += re.sub(r' ([?.,:;!])', r'\1', match[0])
+    #xml_match += f"</{tag}>"
+    return match[0]
 
 
 def format_parsed_query(term_list, strict=False):
@@ -595,8 +596,9 @@ def format_keyword_queries(keywords, field, qp, slop=1):
         if '"' in keyword:
             terms.append(Phrase(field, keyword.strip('"').split(), slop=slop))
         elif '//' in keyword:
-            terms.append(And([format_parsed_query([keyword], True)[0],
-                              Term(field, keyword.split('//')[0])]))
+            terms.append(Regex('parsed_target', fr'^{keyword}'))
+                # And([format_parsed_query([keyword], True)[0],
+                # Term(field, keyword.split('//')[0])]))
         else:
             terms.append(qp.parse(f'{field}:{keyword}'))
     return Or(terms)
