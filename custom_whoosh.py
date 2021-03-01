@@ -317,8 +317,8 @@ class CustomHighlighter(Highlighter):
 
             # Set Token.matched attribute for tokens that match a query term
             if strict_phrase:
-                terms, phrases = results.q.phrases()
-                # terms, phrases = separate_query_terms(results.q, results)
+                # terms, phrases = results.q.phrases()
+                terms, phrases = separate_query_terms(results.q, results)
                 tokens = set_matched_filter_phrases_(tokens, text, terms,
                                                      phrases, self.analyzer)
             else:
@@ -343,7 +343,7 @@ class CustomHighlighter(Highlighter):
         return output
 
 
-def separate_query_terms(query, results):
+def separate_query_terms(query, results, field='target'):
     """
     recursively find all query constituents and separate them into
     terms or Regex and phrases.
@@ -353,8 +353,8 @@ def separate_query_terms(query, results):
     phrases = []
     if isinstance(query, Term):
         terms.append(query)
-    elif isinstance(query, Regex):
-        field = query.field()
+    elif isinstance(query, Regex) and field == query.field():
+        #field = query.field()
         terms.extend([Term(field, match) for match in
                       [match.decode() for match in query._btexts(
                           results.searcher.reader())]])
@@ -365,7 +365,7 @@ def separate_query_terms(query, results):
         for query in query.children():
             if isinstance(query, Term):
                 terms.append(query)
-            elif isinstance(query, Regex):
+            elif isinstance(query, Regex) and field == query.field():
                 field = query.field()
                 terms.extend([Term(field, match) for match in
                               [match.decode() for match in query._btexts(
@@ -373,7 +373,7 @@ def separate_query_terms(query, results):
             elif isinstance(query, Phrase):
                 phrases.append(query)
             elif isinstance(query, CompoundQuery):
-                t, p = separate_query_terms(query, results)
+                t, p = separate_query_terms(query, results, field)
                 phrases.extend(p)
                 terms.extend(t)
     return terms, phrases

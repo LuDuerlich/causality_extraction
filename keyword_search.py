@@ -16,7 +16,7 @@ import re
 from search_terms import search_terms, expanded_dict,\
     incr_dict, decr_dict, annotated_search_terms,\
     keys_to_pos, filtered_expanded_dict,\
-    create_tagged_term_list
+    create_tagged_term_list, tagged_list
 # sys.path.append("/Users/luidu652/Documents/causality_extraction/whoosh/src/")
 # from whoosh.analysis import SpaceSeparatedTokenizer
 from util import find_nearest_neighbour
@@ -344,7 +344,7 @@ def create_index(path_=f"{path}/test_index/", ixname="test",
         writer.commit()
 
 
-def print_to_file(ix=ix, keywords=["orsak", '"bidrar till"'], terms=[""], field=None, prefix=''):
+def print_to_file(ix, keywords=["orsak", '"bidrar till"'], terms=[""], field=None, prefix=''):
     """Print all examples matching the  query term to an XML file.
 
     Parameters:
@@ -596,9 +596,9 @@ def format_keyword_queries(keywords, field, qp, slop=1):
         if '"' in keyword:
             terms.append(Phrase(field, keyword.strip('"').split(), slop=slop))
         elif '//' in keyword:
-            terms.append(Regex('parsed_target', fr'^{keyword}'))
-                # And([format_parsed_query([keyword], True)[0],
-                # Term(field, keyword.split('//')[0])]))
+            terms.append(  # Regex('parsed_target', fr'^{keyword}'))
+                And([format_parsed_query([keyword], True)[0],
+                     Term(field, keyword.split('//')[0])]))
         else:
             terms.append(qp.parse(f'{field}:{keyword}'))
     return Or(terms)
@@ -813,8 +813,9 @@ if __name__ == "__main__":
     query_list = [wf for term in expanded_dict.values() for wf in term]
     filtered_query_list = [wf for term in filtered_expanded_dict.values()
                            for wf in term]
-    tagged_list = create_tagged_term_list(filtered_expanded_dict,
-                                          annotated_search_terms)
+    # tagged_list = create_tagged_term_list(filtered_expanded_dict,
+    #                                       annotated_search_terms)
+
     decr_terms = [wf for term in {**decr_dict, **incr_dict}.values()
                   for wf in term]
     decr_terms_pos = [f'{wf}//{keys_to_pos[key]}' for key, term
