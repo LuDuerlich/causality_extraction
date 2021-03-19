@@ -35,7 +35,7 @@ logging.basicConfig(format='%(asctime)s %(message)s',
 
 
 @st.cache
-def generate_prompts(topic):
+def generate_prompts(cause=None, effect=None):
     """
     insert topic and expansions into prompt templates.
     This is a local version that does not include query expansion
@@ -61,13 +61,23 @@ def generate_prompts(topic):
                  for keyword_templates in prompt_dict.values()
                  for template in keyword_templates]
 
-    def fill_templates(term, templates):
-        return [template.replace('X', term) for template in templates]
+    def fill_templates(term, templates, placeholder='X'):
+        return [template.replace(placeholder, term) for template in templates]
 
-    topic_terms = [topic]
+    # topic_terms = [topic]
     # generate prompts
-    prompts = [prompt for term in topic_terms
-               for prompt in fill_templates(term, templates)]
+    prompts = []
+    if effect:
+        
+        prompts = [prompt for term in [effect]
+                   for prompt in fill_templates(term, templates)]
+        if cause:
+            prompts = [prompt for term in [cause]
+                       for prompt in fill_templates(term, prompts, '[MASK]')]
+    elif cause:
+        prompts = [prompt for term in [cause]
+                   for prompt in fill_templates(term, templates, '[MASK]')]
+
     return prompts
 
 
@@ -467,6 +477,8 @@ def page_sent_search(state):
     state.debug = select_options.index(st.sidebar.radio('Debug', select_options, index))
 
     default = ''
+    cause_default = ''
+    effect_default = ''
     emb_id = None
     query_params = st.experimental_get_query_params()
     if not state.debug:
@@ -485,8 +497,12 @@ def page_sent_search(state):
         default = state.train['meta'][emb_id][3]
         state.search_type = 1
     else:
-        if str(state.query).casefold() != 'none':
+        if state.query is not None:
             default = state.query
+        if state.query_cause is not None:
+            cause_default = state.query_cause
+        if state.query_effect is not None:
+            effect_default = state.query_effect
     if emb_id is not None:
         # there is a bug / undesired refreshing of the page that interferes here!
         # sometimes?
@@ -495,8 +511,12 @@ def page_sent_search(state):
         # st.markdown(f'## ”_{default}_”')
     else:
         st.title(":mag: Sökning")
-        state.query = st.text_input('Vilket ämne är du intresserad av?',
-                                    default)
+        if state.search_type == 1:
+            state.query = st.text_input('Ange en mening',
+                                        default)
+        else:
+            state.query_cause = st.text_input('Ange en orsak', effect_default)
+            state.query_effect = st.text_input('Ange ett effekt', cause_default)
         select_options = ['ämne', 'mening']
         index = state.search_type if state.search_type else 0
         state.search_type = st.radio('Söktyp:', select_options, index)
@@ -504,8 +524,10 @@ def page_sent_search(state):
         state.search_type = select_options.index(state.search_type)
 
     update_query_params(state)
-    if state.query and state.search_type == 0:  # emb_id is None:
-        prompts = generate_prompts(state.query)
+    if (state.query_cause or state.query_effect) and state.search_type == 0:  # emb_id is None:
+        
+        prompts = generate_prompts(cause=state.query_cause,
+                                   effect=state.query_effect)
         rank(state, prompts, emb_id=emb_id)
     elif default:  # if emb_id is not None:
         st.markdown(f'## ”_{default}_”')
@@ -524,7 +546,12 @@ def rank(state, prompts, emb_id=None):
     elif isinstance(prompts, list) and len(prompts) == 1:
         term = prompts[0]
     else:
-        term = state.query
+        term = ''
+        if state.query_cause:
+            term += f'Orsak: {state.query_cause}'
+        if state.query_effect:
+            term += f'; Verkan: {state.query_effect}'
+        term = term.strip('; ')
     if not state.ranking:
         state.ranking = {}
     if term not in state.ranking:
