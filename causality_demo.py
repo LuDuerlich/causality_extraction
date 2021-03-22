@@ -39,15 +39,15 @@ def get_table_download_link(table):
     output = BytesIO()
     writer = pd.ExcelWriter(output, engine='xlsxwriter')
     table.to_excel(writer, index=False, sheet_name=f'Sökresultat',
-                   float_format="%.2f")#f'data:file/xlsx;base64,{b64}.xlsx')
-    #workbook  = writer.book
-    #worksheet = writer.sheets['Sökresultat']
+                   float_format="%.2f")
+
     writer.save()
     output_val = output.getvalue()
-    b64 = base64.b64encode(output_val) # some strings
+    b64 = base64.b64encode(output_val)
 
     link = f'<a href="data:application/octet-stream;base64,{b64.decode()}" download="sökresultat.xlsx">spara resultat</a>'
     return link
+
 
 @st.cache
 def generate_prompts(cause=None, effect=None):
@@ -83,7 +83,7 @@ def generate_prompts(cause=None, effect=None):
     # generate prompts
     prompts = []
     if effect:
-        
+
         prompts = [prompt for term in [effect]
                    for prompt in fill_templates(term, templates)]
         if cause:
@@ -196,7 +196,7 @@ def display_result(state, term, doc_id, filter):
     display a single match if it matches the filter
     """
     start = time.time()
-    match = state.ranking[term][doc_id]
+    match = state.ranking[(term, state.scope)][doc_id]
     stats = ['rank', 'count', 'distance', 'nb_matches']
     if isinstance(doc_id, tuple):
         text, doc_id, sent_nb, match_emb_id = doc_id
@@ -205,8 +205,8 @@ def display_result(state, term, doc_id, filter):
     date = datetime.datetime.fromisoformat(date)
 
     def format_stats(k, match=match):
-        return (": ".join([k, f"{match[k]:>1.3f}"])\
-                if isinstance(match[k], float)\
+        return (": ".join([k, f"{match[k]:>1.3f}"])
+                if isinstance(match[k], float)
                 else ": ".join([k,
                                 f"{sum(match[k]) / match['count']:>1.3f}"
                                 if isinstance(match[k], list)
@@ -276,12 +276,14 @@ def render_sentence(text, match, state, emb_id, doc_title,
         res['section'] = section
     target = text.strip("'")
     st.markdown(target)
-    res['vänster kontext'], res['träff'], res['höger kontext'] = target.split('**')
+    res['vänster kontext'], res['träff'],\
+        res['höger kontext'] = target.split('**')
     st.markdown(stats)
     res['stats'] = stats
     # st.markdown(f'rank: {sum(match["rank"])/match["count"]:>1.3f},
     # distance: {sum(match["distance"])/match["count"]:>1.3f}, count: {match["count"]}')
-    if state.debug == 'on':
+
+    if state.debug == 1:
         debug_stats = pd.DataFrame({'rank': match["rank"],
                                     'distance': match["distance"]})
         st.table(debug_stats)
@@ -334,8 +336,8 @@ def order_results_by_sents(distances, neighbours, prompts, text):
 
 
 @st.cache(allow_output_mutation=True)
-def run_ranking(prompts, train, n=30, sorting_func=order_results_by_sents, emb_id=None):
-    print(sorting_func)
+def run_ranking(prompts, train, n=30, sorting_func=order_results_by_sents,
+                emb_id=None):
     start = time.time()
     if emb_id is None:
         embeddings = embed_text(prompts, save_out=False)
@@ -403,16 +405,16 @@ def order_results_by_documents(distances, neighbours, prompts, text,
         count = 0
         for text in neighbor['matched_text']:
             stats = neighbor['matched_text'][text]
-            stats['rank'] = (((topic_count - stats['count'])
+            avg_rank = (((topic_count - stats['count'])
                               * (n_neighbours + 1))
                              + sum([int(el) + 1 for el in stats['rank']])
                              ) / topic_count
-            stats['distance'] = (((topic_count - stats['count']) * max_dist)
+            avg_distance = (((topic_count - stats['count']) * max_dist)
                                  + sum([float(el) for el in stats['distance']])
                                  ) / topic_count
             match_dict[doc_id]['count'] += stats['count']
-            match_dict[doc_id]['rank'] += stats['rank']
-            match_dict[doc_id]['distance'] += stats['distance']
+            match_dict[doc_id]['rank'] += avg_rank
+            match_dict[doc_id]['distance'] += avg_distance
             match_dict[doc_id]['nb_matches'] += 1
             count += 1
         match_dict[doc_id]['count'] /= count
@@ -434,26 +436,56 @@ on_gpu, tokenizer, model = init_ct_model()
 
 def main():
     print(f'{time.asctime()} start main')
-    #st.title('test app')
     state = _get_state()
-    pages = {
-        "Sentence search": page_sent_search,
-    }
     for k, v in st.experimental_get_query_params().items():
         if v[0].isnumeric():
             state[k] = int(v[0])
         else:
-            state[k] = v[0]
+            state[k] = v[0] if not v[0] == 'None' else None
     st.sidebar.title(":wrench: Inställningar")
-    # use isnumeric to pass along terms too
-    # page = st.sidebar.radio("Select your page", tuple(pages.keys()))
-    page = 'Sentence search'
+    if not state.n_results:
+        state.n_results = 10
+    state.n_results = st.sidebar.slider('max antal matchningar',
+                                        min_value=1, max_value=30,
+                                        value=state.n_results)
+    st.sidebar.markdown('---')
+    select_options = ['ämne', 'mening']
+    index = select_options.index(state.search_type) \
+        if state.search_type else 0
+    state.search_type = st.sidebar.radio('Söktyp:', select_options, index)
+    st.sidebar.markdown('---')
+
+    from_options = [i for i in range(1995, 2020, 1)]
+    index = 0
+    if state.time_from:
+        index = from_options.index(state.time_from)
+    state.time_from = st.sidebar.selectbox('fr.o.m', from_options, index=index)
+    to_options = sorted([el for el in from_options if el > state.time_from],
+                        reverse=True)
+    if state.time_to:
+        index = to_options.index(state.time_to)
+    state.time_to = st.sidebar.selectbox('t.o.m', to_options, index=index)
+
+    st.sidebar.markdown('---')
+    select_options = ['enskilda meningar', 'dokument']
+    index = state.scope if state.scope else 0
+    state.scope = select_options.index(st.sidebar.radio('gruppering',
+                                                        select_options, index))
+
+    st.sidebar.markdown('---')
+    select_options = ['off', 'on']
+    index = state.debug if state.debug else 0
+    state.debug = select_options.index(st.sidebar.radio('Debug',
+                                                        select_options, index))
+
+    update_query_params(state)
 
     # Display the selected page with the session state
-    pages[page](state)
+    page_sent_search(state)
 
-    # Mandatory to avoid rollbacks with widgets, must be called at the end of your app
-    state.sync()
+    # Mandatory to avoid rollbacks with widgets,
+    # must be called at the end of your app
+    # state.sync()
     print(f'{time.asctime()} end main')
 
 
@@ -475,40 +507,16 @@ def get_headers():
 
 
 def page_sent_search(state):
-    if not state.n_results:
-        state.n_results = 10
-    state.n_results = st.sidebar.slider('max antal matchningar',
-                                        min_value=1, max_value=30,
-                                        value=state.n_results)
-    st.sidebar.markdown('---')
-    from_options = [i for i in range(1995, 2020, 1)]
-    index = 0
-    if state.time_from:
-        index = from_options.index(state.time_from)
-    state.time_from = st.sidebar.selectbox('fr.o.m', from_options, index=index)
-    to_options = sorted([el for el in from_options if el > state.time_from],
-                        reverse=True)
-    if state.time_to:
-        index = to_options.index(state.time_to)
-    state.time_to = st.sidebar.selectbox('t.o.m', to_options, index=index)
-
-    st.sidebar.markdown('---')
-    select_options = ['enskilda meningar', 'dokument']
-    index = state.scope if state.scope else 0
-    state.scope = select_options.index(st.sidebar.radio('gruppering', select_options, index))
-
-    st.sidebar.markdown('---')
-    select_options = ['on', 'off']
-    index = state.debug if state.debug else 1
-    state.debug = select_options.index(st.sidebar.radio('Debug', select_options, index))
-
     default = ''
     cause_default = ''
     effect_default = ''
     emb_id = None
-    query_params = st.experimental_get_query_params()
-    if not state.debug:
+    header = None
+    query_params = get_query_params(state)
+    # query_params = st.experimental_get_query_params()
+    if state.debug:
         st.write(f'QUERY params: {query_params}')
+
     if 'emb_id' in query_params:
         emb_id = query_params['emb_id']
         if isinstance(emb_id, list):
@@ -519,7 +527,6 @@ def page_sent_search(state):
             state.train = load_documents(
                 './filtered_vs_unfiltered_nn/full_matches_353599_embeddings.gzip',
                 'meta.pickle.gz')
-        # this is a stupid solution! implement an update function!
         default = state.train['meta'][emb_id][3]
         state.search_type = 1
     else:
@@ -530,40 +537,47 @@ def page_sent_search(state):
         if state.query_effect is not None:
             effect_default = state.query_effect
     if emb_id is not None:
-        # there is a bug / undesired refreshing of the page that interferes here!
+        # there is a bug/undesired refreshing of the page that interferes here!
         # sometimes?
         st.title(":mag: Fler resultat som ...")
-        st.header('Resultat för meningsbaserat sökning')
-        # st.markdown(f'## ”_{default}_”')
+        start_search = True
+        header = st.header('Resultat för meningsbaserat sökning')
     else:
         st.title(":mag: Sökning")
-        if state.search_type == 1:
+        if state.search_type == 'mening':
             state.query = st.text_input('Ange en mening',
                                         default)
+            update_query_params(state)
         else:
             state.query_cause = st.text_input('Ange en orsak', cause_default)
-            state.query_effect = st.text_input('Ange ett effekt', effect_default)
+            update_query_params(state)
+            state.query_effect = st.text_input('Ange ett effekt',
+                                               effect_default)
+            update_query_params(state)
 
-        select_options = ['ämne', 'mening']
-        index = state.search_type if state.search_type else 0
-        state.search_type = st.radio('Söktyp:', select_options, index)
-        st.header(f'Resultat för {state.search_type}sbaserat sökning')
-        state.search_type = select_options.index(state.search_type)
-    if state.result:
-        print('we have results to save')
-        #if st.button('Spara resultat'):
-        table = pd.DataFrame(state.result)
-        st.markdown(get_table_download_link(table), unsafe_allow_html=True)
-        print('RESULTS:', len(state.result))
-    update_query_params(state)
-    if (state.query_cause or state.query_effect) and state.search_type == 0:  # emb_id is None:
-        
-        prompts = generate_prompts(cause=state.query_cause,
-                                   effect=state.query_effect)
-        rank(state, prompts, emb_id=emb_id)
-    elif default:  # if emb_id is not None:
-        st.markdown(f'## ”_{default}_”')
-        rank(state, [default], emb_id=emb_id)
+        # state.search_type = select_options.index(state.search_type)
+        updated = update_query_params(state)
+        if updated:
+            start_search = st.button('skapa sökfrågan')
+        else:
+            start_search = True
+    if start_search:
+        if not header:
+            st.header(f'Resultat för {state.search_type}sbaserat sökning')
+        result_link = st.empty()
+        if (state.query_cause or state.query_effect)\
+           and state.search_type == 'ämne':
+
+            prompts = generate_prompts(cause=state.query_cause,
+                                       effect=state.query_effect)
+            rank(state, prompts, emb_id=emb_id)
+        elif default:
+            st.markdown(f'## ”_{default}_”')
+            rank(state, [default], emb_id=emb_id)
+        if state.result:
+            table = pd.DataFrame(state.result)
+            result_link.markdown(get_table_download_link(table),
+                                 unsafe_allow_html=True)
 
 
 def rank(state, prompts, emb_id=None):
@@ -572,8 +586,9 @@ def rank(state, prompts, emb_id=None):
     state.result = []
     start = time.time()
     if not hasattr(state, 'train') or not state.train:
-        state.train = load_documents('./filtered_vs_unfiltered_nn/full_matches_353599_embeddings.gzip',
-                                     'meta.pickle.gz')
+        state.train = load_documents(
+            './filtered_vs_unfiltered_nn/full_matches_353599_embeddings.gzip',
+            'meta.pickle.gz')
     if isinstance(prompts, str):
         term = prompts
         prompts = [prompts]
@@ -589,16 +604,18 @@ def rank(state, prompts, emb_id=None):
         state.term = term
     if not state.ranking:
         state.ranking = {}
-    if term not in state.ranking:
+    ranking_key = (term, state.scope)
+    if ranking_key not in state.ranking:
         sorting_func = order_results_by_documents if state.scope == 1\
             else order_results_by_sents
-        state.ranking[term] = run_ranking(prompts, state.train,
-                                          n=10, emb_id=emb_id,
-                                          sorting_func=sorting_func)
+        state.ranking[ranking_key] = run_ranking(
+            prompts, state.train,
+            n=10, emb_id=emb_id,
+            sorting_func=sorting_func)
     n_matches = 0
     logging.info(
-        f'ranking {len(state.ranking[term])} documents for "{term}"')
-    for el in state.ranking[term]:
+        f'ranking {len(state.ranking[ranking_key])} documents for "{term}"')
+    for el in state.ranking[ranking_key]:
         hit = display_result(state, term, el, {'time_from': state.time_from,
                                                'time_to': state.time_to})
         if hit:
@@ -616,7 +633,8 @@ def page_dashboard(state):
 
 
 def display_state_values(state):
-    st.write('state size:', len(state._state['data']), state._state['data'].keys())
+    st.write('state size:', len(state._state['data']),
+             state._state['data'].keys())
     st.write('Query:', state.query)
     st.write('more like:', state.more_like_buttons)
     if state.train:
@@ -624,7 +642,8 @@ def display_state_values(state):
     st.write('Checkboxes:', state.checkboxes)
     if state.ranking:
         n_rank = len(state.ranking)
-        st.write('Ranking:', n_rank, sum([len(v) for v in state.ranking.values()])/n_rank)
+        st.write('Ranking:', n_rank,
+                 sum([len(v) for v in state.ranking.values()])/n_rank)
     st.write('Button:', state.button)
 
     if st.button("Clear state"):
@@ -633,10 +652,31 @@ def display_state_values(state):
 
 def update_query_params(state):
     params = ['emb_id', 'time_from', 'time_to', 'debug',
-              'n_results', 'search_type', 'scope', 'query']
-    updated_states = {param: state[param] for param in params
-                      if state[param]}
+              'n_results', 'search_type', 'scope', 'query',
+              'query_cause', 'query_effect']
+    old_states = st.experimental_get_query_params() 
+    updated_states = {}
+    has_changes = False
+    for param in params:
+        if state[param]:
+            if not has_changes or param not in old_states\
+               or state[param] != old_states[param]:
+                has_changes = True
+            updated_states[param] = state[param]
+                      
     st.experimental_set_query_params(**updated_states)
+    return has_changes
+
+
+def get_query_params(state):
+    query_params = st.experimental_get_query_params()
+    params = ['emb_id', 'time_from', 'time_to', 'debug',
+              'n_results', 'search_type', 'scope', 'query',
+              'query_cause', 'query_effect']
+    for p in params:
+        if p not in query_params and state[p] is not None:
+            query_params[p] = state[p]
+    return query_params
 
 
 class _SessionState:
