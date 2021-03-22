@@ -45,7 +45,7 @@ def get_table_download_link(table):
     output_val = output.getvalue()
     b64 = base64.b64encode(output_val)
 
-    link = f'<a href="data:application/octet-stream;base64,{b64.decode()}" download="sökresultat.xlsx">spara resultat</a>'
+    link = f'<a href="data:application/octet-stream;base64,{b64.decode()}" download="sökresultat.xlsx">spara {len(table)} resultat</a>'
     return link
 
 
@@ -443,11 +443,14 @@ def main():
         else:
             state[k] = v[0] if not v[0] == 'None' else None
     st.sidebar.title(":wrench: Inställningar")
-    if not state.n_results:
-        state.n_results = 10
-    state.n_results = st.sidebar.slider('max antal matchningar',
-                                        min_value=1, max_value=30,
-                                        value=state.n_results)
+    if st.sidebar.checkbox('begränsa träffmängden'):
+        if not state.n_results:
+            state.n_results = 10
+            state.n_results = st.sidebar.slider('max antal matchningar',
+                                                min_value=1, max_value=30,
+                                                value=state.n_results)
+    else:
+        state.n_results = 0
     st.sidebar.markdown('---')
     select_options = ['ämne', 'mening']
     index = select_options.index(state.search_type) \
@@ -620,7 +623,7 @@ def rank(state, prompts, emb_id=None):
                                                'time_to': state.time_to})
         if hit:
             n_matches += 1
-            if n_matches >= state.n_results:
+            if state.n_results and n_matches >= state.n_results:
                 break
             st.markdown('---')
     print(f'{time.asctime()} ranking({prompts}) took {time.time()-start} s ')
