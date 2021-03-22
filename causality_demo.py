@@ -1,5 +1,6 @@
+import csv
+import base64
 import streamlit as st
-
 from streamlit.hashing import _CodeHasher
 import pandas as pd
 import torch
@@ -15,7 +16,7 @@ except ModuleNotFoundError:
 
 import pickle
 import datetime
-
+from io import BytesIO
 from sklearn.neighbors import NearestNeighbors
 from collections import OrderedDict
 import gzip
@@ -33,6 +34,20 @@ st.set_page_config(page_title='demo app',
 logging.basicConfig(format='%(asctime)s %(message)s',
                     level=logging.INFO)
 
+
+def get_table_download_link(table):
+    output = BytesIO()
+    writer = pd.ExcelWriter(output, engine='xlsxwriter')
+    table.to_excel(writer, index=False, sheet_name=f'Sökresultat',
+                   float_format="%.2f")#f'data:file/xlsx;base64,{b64}.xlsx')
+    #workbook  = writer.book
+    #worksheet = writer.sheets['Sökresultat']
+    writer.save()
+    output_val = output.getvalue()
+    b64 = base64.b64encode(output_val) # some strings
+
+    link = f'<a href="data:application/octet-stream;base64,{b64.decode()}" download="sökresultat.xlsx">spara resultat</a>'
+    return link
 
 @st.cache
 def generate_prompts(cause=None, effect=None):
@@ -253,10 +268,17 @@ def render_sentence(text, match, state, emb_id, doc_title,
     # target = text.split('**')[1]
     if not hasattr(state, 'more_like') or not state.more_like_buttons:
         state.more_like_buttons = {}
+    if not state.result:
+        state.result = []
+    res = {}
     if section:
         st.subheader(section)
-    st.markdown(text.strip("'"))
+        res['section'] = section
+    target = text.strip("'")
+    st.markdown(target)
+    res['vänster kontext'], res['träff'], res['höger kontext'] = target.split('**')
     st.markdown(stats)
+    res['stats'] = stats
     # st.markdown(f'rank: {sum(match["rank"])/match["count"]:>1.3f},
     # distance: {sum(match["distance"])/match["count"]:>1.3f}, count: {match["count"]}')
     if state.debug == 'on':
@@ -264,16 +286,20 @@ def render_sentence(text, match, state, emb_id, doc_title,
                                     'distance': match["distance"]})
         st.table(debug_stats)
         st.write(f'embedding id: {emb_id}')
+    res['doc'] = doc_title
     if html_link:
         st.markdown(
             f'Här hittar du dokumentet: [{doc_title}]({html_link})')
+        res['html'] = html_link
     preset_params = parse.urlencode({'emb_id': emb_id,
                                      'time_from': state.time_from,
                                      'time_to': state.time_to,
                                      'n_results': state.n_results},
                                     doseq=True)
     st.markdown(
-        f'[visa fler resultat som liknar avsnittet!](http://localhost:8501/?{preset_params})')
+        '[visa fler resultat som liknar avsnittet!]' +
+        f'(http://localhost:8501/?{preset_params})')
+    state.result.append(res)
 
 
 def order_results_by_sents(distances, neighbours, prompts, text):
@@ -515,14 +541,20 @@ def page_sent_search(state):
             state.query = st.text_input('Ange en mening',
                                         default)
         else:
-            state.query_cause = st.text_input('Ange en orsak', effect_default)
-            state.query_effect = st.text_input('Ange ett effekt', cause_default)
+            state.query_cause = st.text_input('Ange en orsak', cause_default)
+            state.query_effect = st.text_input('Ange ett effekt', effect_default)
+
         select_options = ['ämne', 'mening']
         index = state.search_type if state.search_type else 0
         state.search_type = st.radio('Söktyp:', select_options, index)
         st.header(f'Resultat för {state.search_type}sbaserat sökning')
         state.search_type = select_options.index(state.search_type)
-
+    if state.result:
+        print('we have results to save')
+        #if st.button('Spara resultat'):
+        table = pd.DataFrame(state.result)
+        st.markdown(get_table_download_link(table), unsafe_allow_html=True)
+        print('RESULTS:', len(state.result))
     update_query_params(state)
     if (state.query_cause or state.query_effect) and state.search_type == 0:  # emb_id is None:
         
@@ -536,6 +568,8 @@ def page_sent_search(state):
 
 def rank(state, prompts, emb_id=None):
     st.markdown('---')
+    # reset results
+    state.result = []
     start = time.time()
     if not hasattr(state, 'train') or not state.train:
         state.train = load_documents('./filtered_vs_unfiltered_nn/full_matches_353599_embeddings.gzip',
@@ -552,6 +586,7 @@ def rank(state, prompts, emb_id=None):
         if state.query_effect:
             term += f'; Verkan: {state.query_effect}'
         term = term.strip('; ')
+        state.term = term
     if not state.ranking:
         state.ranking = {}
     if term not in state.ranking:
