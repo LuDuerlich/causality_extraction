@@ -98,12 +98,15 @@ def generate_prompts(cause=None, effect=None):
 
 @st.cache(allow_output_mutation=True)
 def load_binary(emb_file):
+    print(f'{time.asctime()} loading {emb_file}')
+    start = time.time()
     if emb_file.endswith('.gzip') or emb_file.endswith('.gz'):
         with gzip.GzipFile(emb_file, 'rb') as ifile:
             embeddings = pickle.loads(ifile.read())
     elif emb_file.endswith('.pickle'):
         with open(emb_file, 'rb') as ifile:
             embeddings = pickle.load(ifile)
+    print(f'{time.asctime()} load_binary() took {time.time()-start} s ')
     return embeddings
 
 
@@ -213,7 +216,8 @@ def display_result(state, term, doc_id, filter):
                                 else str(match[k])]))\
                                      if k in match else ''
 
-    if date.year in range(filter['time_from'], filter['time_to']):
+    if date.year in range(filter['time_from'], filter['time_to'])\
+       and (state.doc_id == None or state.doc_id != doc_id):
         # if we extract page ids from the html we might even be able to
         # link the approximate location of the match
         # (ids seem to be a little off)
@@ -235,7 +239,6 @@ def display_result(state, term, doc_id, filter):
                                    match['matched_text'][x]['distance'],
                                    -1 * match['matched_text'][x]['rank'])):
                 sentence_match = match['matched_text'][sent]
-                print(sentence_match, sent)
                 if displayed_sents == 3:
                     break
                 sent_stats = ', '.join([format_stats(k, sentence_match)
@@ -244,7 +247,8 @@ def display_result(state, term, doc_id, filter):
                                 sentence_match,
                                 state,
                                 sentence_match['text']['emb_id'],
-                                sent_stats, doc_title_text,
+                                sent_stats, doc_id,
+                                doc_title_text,
                                 section=sent.split(':')[-1].strip("'"))
                 #                 st.markdown(sent.split(':')[-1].strip("'"))
                 # st.markdown(match['matched_text'][sent]['text']['content']
@@ -252,19 +256,20 @@ def display_result(state, term, doc_id, filter):
 
                 displayed_sents += 1
 
-        else:
+        elif filter['emb_id'] is None\
+               or filter['emb_id'] != match_emb_id:
+            #st.write(f'{filter["emb_id"]}, {match_emb_id}; {type(filter["emb_id"])}, {type(match_emb_id)}')
             stats = ', '.join([format_stats(k) for k in stats])
             render_sentence(text, match, state, match_emb_id,
-                            doc_title_text, stats, html_link)
+                            doc_title_text, stats, doc_id, html_link)
         print(f'{time.asctime()} display_result({term})',
               f'took {time.time()-start} s ')
         return True
     return False
-# st.number_input('Enter a number')
 
 
 def render_sentence(text, match, state, emb_id, doc_title,
-                    stats, html_link=None, section=None):
+                    stats, doc_id, html_link=None, section=None):
     # target = text.split('**')[1]
     if not hasattr(state, 'more_like') or not state.more_like_buttons:
         state.more_like_buttons = {}
@@ -277,8 +282,8 @@ def render_sentence(text, match, state, emb_id, doc_title,
     target = text.strip("'")
     st.markdown(target)
     res['vänster kontext'], res['träff'],\
-        res['höger kontext'] = target.split('**')
-    st.markdown(stats)
+       res['höger kontext'] = target.split('**')
+    # doc_title_placeholder = st.empty()
     res['stats'] = stats
     # st.markdown(f'rank: {sum(match["rank"])/match["count"]:>1.3f},
     # distance: {sum(match["distance"])/match["count"]:>1.3f}, count: {match["count"]}')
@@ -294,9 +299,13 @@ def render_sentence(text, match, state, emb_id, doc_title,
             f'Här hittar du dokumentet: [{doc_title}]({html_link})')
         res['html'] = html_link
     preset_params = parse.urlencode({'emb_id': emb_id,
+                                     'doc_id': doc_id,
                                      'time_from': state.time_from,
                                      'time_to': state.time_to,
-                                     'n_results': state.n_results},
+                                     'n_results': state.n_results,
+                                     'search_type': 'mening',
+                                     'scope': state.scope,
+                                     'debug': state.debug},
                                     doseq=True)
     st.markdown(
         '[visa fler resultat som liknar avsnittet!]' +
@@ -344,13 +353,14 @@ def run_ranking(prompts, train, n=30, sorting_func=order_results_by_sents,
     else:
         embeddings = torch.unsqueeze(train['embeddings'][emb_id], dim=0)
     outpath = f'{len(train)}_nn.gzip'
-    if not os.path.exists(outpath):
-        nn = NearestNeighbors(n_neighbors=40, metric='cosine', p=1)
-        nn.fit(train['embeddings'])
-        with gzip.GzipFile(outpath, 'wb') as data_out:
-            data_out.write(pickle.dumps(nn))
-    else:
-        nn = load_binary(outpath)
+    if True:
+        if not os.path.exists(outpath):
+            nn = NearestNeighbors(n_neighbors=40, metric='cosine', p=1)
+            nn.fit(train['embeddings'])
+            with gzip.GzipFile(outpath, 'wb') as data_out:
+                data_out.write(pickle.dumps(nn))
+        else:
+            nn = load_binary(outpath)
     distance, neighbours = nn.kneighbors(embeddings, n_neighbors=n)
     print(f'{time.asctime()} run_ranking({prompts})',
           f'took {time.time()-start} s ', sorting_func)
@@ -406,12 +416,12 @@ def order_results_by_documents(distances, neighbours, prompts, text,
         for text in neighbor['matched_text']:
             stats = neighbor['matched_text'][text]
             avg_rank = (((topic_count - stats['count'])
-                              * (n_neighbours + 1))
-                             + sum([int(el) + 1 for el in stats['rank']])
-                             ) / topic_count
+                         * (n_neighbours + 1))
+                        + sum([int(el) + 1 for el in stats['rank']])
+                        ) / topic_count
             avg_distance = (((topic_count - stats['count']) * max_dist)
-                                 + sum([float(el) for el in stats['distance']])
-                                 ) / topic_count
+                            + sum([float(el) for el in stats['distance']])
+                            ) / topic_count
             match_dict[doc_id]['count'] += stats['count']
             match_dict[doc_id]['rank'] += avg_rank
             match_dict[doc_id]['distance'] += avg_distance
@@ -437,11 +447,7 @@ on_gpu, tokenizer, model = init_ct_model()
 def main():
     print(f'{time.asctime()} start main')
     state = _get_state()
-    for k, v in st.experimental_get_query_params().items():
-        if v[0].isnumeric():
-            state[k] = int(v[0])
-        else:
-            state[k] = v[0] if not v[0] == 'None' else None
+    read_query_params(state)
     st.sidebar.title(":wrench: Inställningar")
     if st.sidebar.checkbox('begränsa träffmängden'):
         if not state.n_results:
@@ -451,11 +457,43 @@ def main():
                                                 value=state.n_results)
     else:
         state.n_results = 0
+    # print('call main')
+    # update_query_params(state)
+
+    # Display the selected page with the session state
+    page_sent_search(state)
+
+    # Mandatory to avoid rollbacks with widgets,
+    # must be called at the end of your app
+    print(f'{time.asctime()} start sync')
+    state.sync()
+    print(f'{time.asctime()} end sync')
+    print(f'{time.asctime()} end main')
+
+
+def get_headers():
+    # Hack to get the session object from Streamlit.
+
+    current_server = Server.get_current()
+    if hasattr(current_server, '_session_infos'):
+        # Streamlit < 0.56
+        session_infos = Server.get_current()._session_infos.values()
+    else:
+        session_infos = Server.get_current()._session_info_by_id.values()
+
+    # Multiple Session Objects?
+    for session_info in session_infos:
+        headers = session_info.ws.request.headers
+        st.write(headers)
+#    return headers
+
+
+def setup_settings_bar(state):
     st.sidebar.markdown('---')
     select_options = ['ämne', 'mening']
     index = select_options.index(state.search_type) \
         if state.search_type else 0
-    state.search_type = st.sidebar.radio('Söktyp:', select_options, index)
+    state.search_type = st.sidebar.radio('söka efter', select_options, index)
     st.sidebar.markdown('---')
 
     from_options = [i for i in range(1995, 2020, 1)]
@@ -481,42 +519,16 @@ def main():
     state.debug = select_options.index(st.sidebar.radio('Debug',
                                                         select_options, index))
 
-    update_query_params(state)
-
-    # Display the selected page with the session state
-    page_sent_search(state)
-
-    # Mandatory to avoid rollbacks with widgets,
-    # must be called at the end of your app
-    # state.sync()
-    print(f'{time.asctime()} end main')
-
-
-def get_headers():
-    # Hack to get the session object from Streamlit.
-
-    current_server = Server.get_current()
-    if hasattr(current_server, '_session_infos'):
-        # Streamlit < 0.56
-        session_infos = Server.get_current()._session_infos.values()
-    else:
-        session_infos = Server.get_current()._session_info_by_id.values()
-
-    # Multiple Session Objects?
-    for session_info in session_infos:
-        headers = session_info.ws.request.headers
-        st.write(headers)
-#    return headers
-
 
 def page_sent_search(state):
+    setup_settings_bar(state)
     default = ''
     cause_default = ''
     effect_default = ''
     emb_id = None
     header = None
     query_params = get_query_params(state)
-    # query_params = st.experimental_get_query_params()
+
     if state.debug:
         st.write(f'QUERY params: {query_params}')
 
@@ -531,7 +543,7 @@ def page_sent_search(state):
                 './filtered_vs_unfiltered_nn/full_matches_353599_embeddings.gzip',
                 'meta.pickle.gz')
         default = state.train['meta'][emb_id][3]
-        state.search_type = 1
+        state.search_type = 'mening'
     else:
         if state.query is not None:
             default = state.query
@@ -550,21 +562,30 @@ def page_sent_search(state):
         if state.search_type == 'mening':
             state.query = st.text_input('Ange en mening',
                                         default)
-            update_query_params(state)
+            # update_query_params(state)
         else:
             state.query_cause = st.text_input('Ange en orsak', cause_default)
-            update_query_params(state)
-            state.query_effect = st.text_input('Ange ett effekt',
+            # update_query_params(state)
+            state.query_effect = st.text_input('Ange en effekt',
                                                effect_default)
-            update_query_params(state)
+            # update_query_params(state)
 
         # state.search_type = select_options.index(state.search_type)
+        print('call page_sent_search')
         updated = update_query_params(state)
+        st.write(f'updated {updated}')
+        # issue with state and url parameters
+        # state gets reset, maybe keep a separate default?
         if updated:
             start_search = st.button('skapa sökfrågan')
         else:
             start_search = True
-    if start_search:
+    if start_search and\
+       ((state.query not in [None, ''] and state.search_type == 'mening')
+        or ((state.query_cause not in [None, '']
+             or state.query_effect not in [None, ''])
+            and state.search_type == 'ämne')):
+
         if not header:
             st.header(f'Resultat för {state.search_type}sbaserat sökning')
         result_link = st.empty()
@@ -587,6 +608,7 @@ def rank(state, prompts, emb_id=None):
     st.markdown('---')
     # reset results
     state.result = []
+    print(f'{time.asctime()} start ranking')
     start = time.time()
     if not hasattr(state, 'train') or not state.train:
         state.train = load_documents(
@@ -616,11 +638,13 @@ def rank(state, prompts, emb_id=None):
             n=10, emb_id=emb_id,
             sorting_func=sorting_func)
     n_matches = 0
+    ranking_unit = 'document' if state.scope == 1 else 'sentence'
     logging.info(
-        f'ranking {len(state.ranking[ranking_key])} documents for "{term}"')
+        f'ranking {len(state.ranking[ranking_key])} {ranking_unit}s for "{term}"')
     for el in state.ranking[ranking_key]:
         hit = display_result(state, term, el, {'time_from': state.time_from,
-                                               'time_to': state.time_to})
+                                               'time_to': state.time_to,
+                                               'emb_id': emb_id})
         if hit:
             n_matches += 1
             if state.n_results and n_matches >= state.n_results:
@@ -653,20 +677,46 @@ def display_state_values(state):
         state.clear()
 
 
+def read_query_params(state=None):
+    print('read params')
+    if not state:
+        state = {}
+    else:
+        print([(p, state.p) for p in ['emb_id', 'time_from', 'time_to', 'debug',
+              'n_results', 'search_type', 'scope', 'query',
+              'query_cause', 'query_effect']])
+    for k, v in st.experimental_get_query_params().items():
+        print('read:', k, v)
+        if v[0].isnumeric():
+            state[k] = int(v[0])
+        else:
+            state[k] = v[0] if not v[0] == 'None' else None
+    if isinstance(state, dict):
+        return state
+
+
 def update_query_params(state):
     params = ['emb_id', 'time_from', 'time_to', 'debug',
               'n_results', 'search_type', 'scope', 'query',
               'query_cause', 'query_effect']
-    old_states = st.experimental_get_query_params() 
+    old_states = read_query_params()
     updated_states = {}
     has_changes = False
+    print([(param, old_states[param] if param in old_states else None)
+           for param in params])
+    print([(param, state[param]) for param in params])
     for param in params:
         if state[param]:
-            if not has_changes or param not in old_states\
-               or state[param] != old_states[param]:
-                has_changes = True
+            print(f'same old: {param}: {old_states[param] if param in old_states else None} {state[param]}')
+            if not has_changes and (param not in old_states
+                                    or state[param] != old_states[param]):
+                if param in old_states:
+                    print(f'update qp: {param}: {old_states[param]} {state[param]}')
+                    has_changes = True
+                else:
+                    print(f'update qp: {param}: missing {state[param]}')
             updated_states[param] = state[param]
-                      
+
     st.experimental_set_query_params(**updated_states)
     return has_changes
 
