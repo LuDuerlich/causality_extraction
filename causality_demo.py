@@ -205,8 +205,10 @@ def display_result(state, term, doc_id, filter):
         text, doc_id, sent_nb, match_emb_id = doc_id
     doc_id = doc_id.split('_')[-1].split('.')[0]
     doc_title, date = ids_to_date[doc_id][0]
-    date = datetime.datetime.fromisoformat(date)
-
+    # date = datetime.datetime.fromisoformat(date)
+    year = doc_title.split()[-1].split(':')[0]
+    assert year.isnumeric(), f'malformed document title {doc_title} ({year})'
+    year = int(year)
     def format_stats(k, match=match):
         return (": ".join([k, f"{match[k]:>1.3f}"])
                 if isinstance(match[k], float)
@@ -216,7 +218,7 @@ def display_result(state, term, doc_id, filter):
                                 else str(match[k])]))\
                                      if k in match else ''
 
-    if date.year in range(filter['time_from'], filter['time_to'])\
+    if year in range(filter['time_from'], filter['time_to'])\
        and (state.doc_id == None or state.doc_id != doc_id):
         # if we extract page ids from the html we might even be able to
         # link the approximate location of the match
@@ -230,10 +232,11 @@ def display_result(state, term, doc_id, filter):
             doc_title_text = f'{doc_title}, del {continuation[0]}'
 
         if 'matched_text' in match.keys():
-            st.header(f'[{doc_title_text}]({html_link})')
-
+            # st.header(f'[{doc_title_text}]({html_link})')
+            state.outpage.append(f'## [{doc_title_text}]({html_link})')
             stats_header = f'({", ".join([format_stats(k) for k in stats])})'
-            st.subheader(stats_header)
+            # st.subheader(stats_header)
+            state.outpage.append(f'### {stats_header}')
             for sent in sorted(match['matched_text'],
                                key=lambda x: (
                                    match['matched_text'][x]['distance'],
@@ -262,8 +265,8 @@ def display_result(state, term, doc_id, filter):
             stats = ', '.join([format_stats(k) for k in stats])
             render_sentence(text, match, state, match_emb_id,
                             doc_title_text, stats, doc_id, html_link)
-        print(f'{time.asctime()} display_result({term})',
-              f'took {time.time()-start} s ')
+        # print(f'{time.asctime()} display_result({term})',
+        #      f'took {time.time()-start} s ')
         return True
     return False
 
@@ -277,10 +280,12 @@ def render_sentence(text, match, state, emb_id, doc_title,
         state.result = []
     res = {}
     if section:
-        st.subheader(section)
+        # st.subheader(section)
+        state.outpage.append(f'#### {section}')
         res['section'] = section
     target = text.strip("'")
-    st.markdown(target)
+    # st.markdown(target)
+    state.outpage.append(target)
     res['vänster kontext'], res['träff'],\
        res['höger kontext'] = target.split('**')
     # doc_title_placeholder = st.empty()
@@ -291,12 +296,18 @@ def render_sentence(text, match, state, emb_id, doc_title,
     if state.debug == 1:
         debug_stats = pd.DataFrame({'rank': match["rank"],
                                     'distance': match["distance"]})
-        st.table(debug_stats)
-        st.write(f'embedding id: {emb_id}')
+        state.outpage.append('  \n'
+                             + debug_stats.to_markdown().replace('\n',
+                                                                 '  \n'))
+        state.outpage.append(f'  \nembedding id: {emb_id}')
+        # st.table(debug_stats)
+        # st.write(f'embedding id: {emb_id}')
     res['doc'] = doc_title
     if html_link:
-        st.markdown(
-            f'Här hittar du dokumentet: [{doc_title}]({html_link})')
+        # st.markdown(
+        #     f'Här hittar du dokumentet: [{doc_title}]({html_link})')
+        state.outpage.append(
+            f'  \n_Här hittar du dokumentet:_ [{doc_title}]({html_link})')
         res['html'] = html_link
     preset_params = parse.urlencode({'emb_id': emb_id,
                                      'doc_id': doc_id,
@@ -307,9 +318,13 @@ def render_sentence(text, match, state, emb_id, doc_title,
                                      'scope': state.scope,
                                      'debug': state.debug},
                                     doseq=True)
-    st.markdown(
+    # st.markdown(
+    #     '[visa fler resultat som liknar avsnittet!]' +
+    #     f'(http://localhost:8501/?{preset_params})')
+    state.outpage.append(
         '[visa fler resultat som liknar avsnittet!]' +
         f'(http://localhost:8501/?{preset_params})')
+
     state.result.append(res)
 
 
@@ -496,7 +511,7 @@ def setup_settings_bar(state):
     state.search_type = st.sidebar.radio('söka efter', select_options, index)
     st.sidebar.markdown('---')
 
-    from_options = [i for i in range(1995, 2020, 1)]
+    from_options = [i for i in range(1994, 2020, 1)]
     index = 0
     if state.time_from:
         index = from_options.index(state.time_from)
@@ -518,7 +533,8 @@ def setup_settings_bar(state):
     index = state.debug if state.debug else 0
     state.debug = select_options.index(st.sidebar.radio('Debug',
                                                         select_options, index))
-
+    # print('set state according to url:')
+    # update_query_params(state)
 
 def page_sent_search(state):
     setup_settings_bar(state)
@@ -571,41 +587,45 @@ def page_sent_search(state):
             # update_query_params(state)
 
         # state.search_type = select_options.index(state.search_type)
-        print('call page_sent_search')
-        updated = update_query_params(state)
-        st.write(f'updated {updated}')
-        # issue with state and url parameters
-        # state gets reset, maybe keep a separate default?
-        if updated:
-            start_search = st.button('skapa sökfrågan')
-        else:
-            start_search = True
+        update_query_params(state)
+        start_search = st.button('skapa ny sökfråga')
     if start_search and\
        ((state.query not in [None, ''] and state.search_type == 'mening')
         or ((state.query_cause not in [None, '']
              or state.query_effect not in [None, ''])
             and state.search_type == 'ämne')):
-
+        state.outpage = []
         if not header:
-            st.header(f'Resultat för {state.search_type}sbaserat sökning')
+            # header = st.header(f'Resultat för {state.search_type}sbaserat sökning')
+            state.outpage.append(f'# Resultat för {state.search_type}sbaserat sökning')
         result_link = st.empty()
         if (state.query_cause or state.query_effect)\
            and state.search_type == 'ämne':
-
+            state.query = None
             prompts = generate_prompts(cause=state.query_cause,
                                        effect=state.query_effect)
             rank(state, prompts, emb_id=emb_id)
         elif default:
-            st.markdown(f'## ”_{default}_”')
+            state.query_cause = state.query_effect = None
+            #st.markdown(f'## ”_{default}_”')
+            state.outpage.append(f'## ”_{default}_”')
             rank(state, [default], emb_id=emb_id)
         if state.result:
             table = pd.DataFrame(state.result)
-            result_link.markdown(get_table_download_link(table),
-                                 unsafe_allow_html=True)
+            # result_link.markdown(get_table_download_link(table),
+            # unsafe_allow_html=True)
+            state.outpage = state.outpage[:state.insert_link]\
+                + [get_table_download_link(table)]\
+                + state.outpage[state.insert_link:]
+        st.markdown('  \n'.join(state.outpage[:-1]), unsafe_allow_html=True)
+    elif state.outpage:
+        st.markdown('  \n'.join(state.outpage[:-1]), unsafe_allow_html=True)
 
 
 def rank(state, prompts, emb_id=None):
-    st.markdown('---')
+    # st.markdown('---')
+    state.outpage.append('---')
+    state.insert_link = len(state.outpage) - 1
     # reset results
     state.result = []
     print(f'{time.asctime()} start ranking')
@@ -649,7 +669,8 @@ def rank(state, prompts, emb_id=None):
             n_matches += 1
             if state.n_results and n_matches >= state.n_results:
                 break
-            st.markdown('---')
+            # st.markdown('---')
+            state.outpage.append('---')
     print(f'{time.asctime()} ranking({prompts}) took {time.time()-start} s ')
     print(f'{time.asctime()} all matches displayed')
 
@@ -677,20 +698,53 @@ def display_state_values(state):
         state.clear()
 
 
+def is_updated(state):
+    """
+    check if any search settings changed since the last
+    call of main
+    """
+    params = ['emb_id', 'time_from', 'time_to', 'debug',
+              'n_results', 'search_type', 'scope', 'query',
+              'query_cause', 'query_effect']
+    for param in params:
+        if state.previous and state.previous[param] != state[param]:
+            # print('changed value', state.previous[param], state[param])
+            return True
+        elif not state.previous and state[param]:
+            # print('in here')
+            return True
+    return False
+
+
+def record_current_search_settings(state):
+    """
+    record the search settings to compare
+    at the next execution of main
+    """
+    state.previous = {}
+    params = ['emb_id', 'time_from', 'time_to', 'debug',
+              'n_results', 'search_type', 'scope', 'query',
+              'query_cause', 'query_effect']
+    for param in params:
+        print('writing:', param, state.param)
+        state.previous[param] = state.param
+
+
 def read_query_params(state=None):
-    print('read params')
+    """
+    retrieve url query parameters and update the state
+    or return them.
+    """
+    # print('read params')
     if not state:
         state = {}
-    else:
-        print([(p, state.p) for p in ['emb_id', 'time_from', 'time_to', 'debug',
-              'n_results', 'search_type', 'scope', 'query',
-              'query_cause', 'query_effect']])
     for k, v in st.experimental_get_query_params().items():
-        print('read:', k, v)
+        # print('read:', k, v)
         if v[0].isnumeric():
             state[k] = int(v[0])
         else:
             state[k] = v[0] if not v[0] == 'None' else None
+    # print('done')
     if isinstance(state, dict):
         return state
 
@@ -699,26 +753,27 @@ def update_query_params(state):
     params = ['emb_id', 'time_from', 'time_to', 'debug',
               'n_results', 'search_type', 'scope', 'query',
               'query_cause', 'query_effect']
+    new_states = {param: state[param] for param in params}
     old_states = read_query_params()
+    # read_query_params(state)
+    # old_states = state
     updated_states = {}
     has_changes = False
-    print([(param, old_states[param] if param in old_states else None)
-           for param in params])
-    print([(param, state[param]) for param in params])
+
     for param in params:
-        if state[param]:
-            print(f'same old: {param}: {old_states[param] if param in old_states else None} {state[param]}')
+        if new_states[param]:
+            # print(f'same old: {param}: {old_states[param] if param in old_states else None} {new_states[param]}')
             if not has_changes and (param not in old_states
-                                    or state[param] != old_states[param]):
+                                    or new_states[param] != old_states[param]):
                 if param in old_states:
-                    print(f'update qp: {param}: {old_states[param]} {state[param]}')
+                    # print(f'update qp: {param}: {old_states[param]} {new_states[param]}')
                     has_changes = True
-                else:
-                    print(f'update qp: {param}: missing {state[param]}')
-            updated_states[param] = state[param]
+                # else:
+                    # print(f'update qp: {param}: missing {new_states[param]}')
+            updated_states[param] = new_states[param]
 
     st.experimental_set_query_params(**updated_states)
-    return has_changes
+    # return has_changes
 
 
 def get_query_params(state):
