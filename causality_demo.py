@@ -15,7 +15,7 @@ except ModuleNotFoundError:
     from streamlit.server.server import Server
 
 import pickle
-import datetime
+# import datetime
 from io import BytesIO
 from sklearn.neighbors import NearestNeighbors
 from collections import OrderedDict
@@ -38,14 +38,15 @@ logging.basicConfig(format='%(asctime)s %(message)s',
 def get_table_download_link(table):
     output = BytesIO()
     writer = pd.ExcelWriter(output, engine='xlsxwriter')
-    table.to_excel(writer, index=False, sheet_name=f'Sökresultat',
+    table.to_excel(writer, index=False, sheet_name='Sökresultat',
                    float_format="%.2f")
 
     writer.save()
     output_val = output.getvalue()
     b64 = base64.b64encode(output_val)
 
-    link = f'<a href="data:application/octet-stream;base64,{b64.decode()}" download="sökresultat.xlsx">spara {len(table)} resultat</a>'
+    link = f'<a href="data:application/octet-stream;base64,{b64.decode()}" ' +\
+        f'download="sökresultat.xlsx">spara {len(table)} resultat</a>'
     return link
 
 
@@ -84,14 +85,14 @@ def generate_prompts(cause=None, effect=None):
     prompts = []
     if effect:
 
-        prompts = [prompt for term in [effect]
-                   for prompt in fill_templates(term, templates)]
+        prompts = [prompt for prompt in fill_templates(effect, templates)]
         if cause:
-            prompts = [prompt for term in [cause]
-                       for prompt in fill_templates(term, prompts, '[MASK]')]
+            prompts = [prompt for prompt in
+                       fill_templates(cause, prompts, '[MASK]')]
     elif cause:
-        prompts = [prompt for term in [cause]
-                   for prompt in fill_templates(term, templates, '[MASK]')]
+        prompts = [prompt for prompt in
+                   fill_templates(cause, templates, '[MASK]')]
+        prompts = [prompt for prompt in fill_templates('[MASK]', prompts)]
 
     return prompts
 
@@ -106,6 +107,8 @@ def load_binary(emb_file):
     elif emb_file.endswith('.pickle'):
         with open(emb_file, 'rb') as ifile:
             embeddings = pickle.load(ifile)
+    else:
+        raise RuntimeError(f'unknown file type {emb_file}')
     print(f'{time.asctime()} load_binary() took {time.time()-start} s ')
     return embeddings
 
@@ -119,7 +122,12 @@ def load_documents(input_emb, input_meta):
     print(f'{time.asctime()} loading embeddings')
     docs = {}
     docs['embeddings'] = load_binary(input_emb)
-    docs['meta'] = load_binary(input_meta)
+    if input_meta.endswith('.gz'):
+        docs['meta'] = load_binary(input_meta)
+    else:
+        with open(input_meta) as ifile:
+            reader = csv.reader(ifile, delimiter=';')
+            docs['meta'] = [line for line in reader]
     print(f'{time.asctime()} load_documents() took {time.time()-start} s ')
     return docs
 
@@ -194,12 +202,15 @@ def mean_pool(model_out, input_mask):
 
 
 # @st.cache
-def display_result(state, term, doc_id, filter):
+def display_result(state, term, doc_id, filter, seen_documents):
     """
     display a single match if it matches the filter
     """
-    start = time.time()
-    match = state.ranking[(term, state.scope)][doc_id]
+    # start = time.time()
+    if doc_id in seen_documents:
+        return False
+    match = state.ranking[(term, state.scope, state.top_n_ranking,
+                           ' '.join(sorted(state.rank_by)))][doc_id]
     stats = ['rank', 'count', 'distance', 'nb_matches']
     if isinstance(doc_id, tuple):
         text, doc_id, sent_nb, match_emb_id = doc_id
@@ -209,6 +220,7 @@ def display_result(state, term, doc_id, filter):
     year = doc_title.split()[-1].split(':')[0]
     assert year.isnumeric(), f'malformed document title {doc_title} ({year})'
     year = int(year)
+
     def format_stats(k, match=match):
         return (": ".join([k, f"{match[k]:>1.3f}"])
                 if isinstance(match[k], float)
@@ -219,7 +231,7 @@ def display_result(state, term, doc_id, filter):
                                      if k in match else ''
 
     if year in range(filter['time_from'], filter['time_to'])\
-       and (state.doc_id == None or state.doc_id != doc_id):
+       and (state.doc_id is None or state.doc_id != doc_id):
         # if we extract page ids from the html we might even be able to
         # link the approximate location of the match
         # (ids seem to be a little off)
@@ -259,9 +271,9 @@ def display_result(state, term, doc_id, filter):
 
                 displayed_sents += 1
 
-        elif filter['emb_id'] is None\
-               or filter['emb_id'] != match_emb_id:
-            #st.write(f'{filter["emb_id"]}, {match_emb_id}; {type(filter["emb_id"])}, {type(match_emb_id)}')
+        elif filter['emb_id'] is None or filter['emb_id'] != match_emb_id:
+            # st.write(f'{filter["emb_id"]}, {match_emb_id};' +
+            # f'{type(filter["emb_id"])}, {type(match_emb_id)}')
             stats = ', '.join([format_stats(k) for k in stats])
             render_sentence(text, match, state, match_emb_id,
                             doc_title_text, stats, doc_id, html_link)
@@ -285,17 +297,22 @@ def render_sentence(text, match, state, emb_id, doc_title,
         res['section'] = section
     target = text.strip("'")
     # st.markdown(target)
-    state.outpage.append(target)
+    state.outpage.append(target.replace('•', '  \n•'))
     res['vänster kontext'], res['träff'],\
-       res['höger kontext'] = target.split('**')
+        res['höger kontext'] = target.split('**')
     # doc_title_placeholder = st.empty()
     res['stats'] = stats
     # st.markdown(f'rank: {sum(match["rank"])/match["count"]:>1.3f},
-    # distance: {sum(match["distance"])/match["count"]:>1.3f}, count: {match["count"]}')
+    # distance: {sum(match["distance"])/match["count"]:>1.3f},' +
+    # f'count: {match["count"]}')
 
     if state.debug == 1:
-        debug_stats = pd.DataFrame({'rank': match["rank"],
-                                    'distance': match["distance"]})
+        debug_stats = pd.DataFrame({'rank': match["rank"]
+                                    + [sum(match['rank']) /
+                                       len(match['rank'])],
+                                    'distance': match["distance"]
+                                    + [sum(match['distance']) /
+                                       len(match['distance'])]})
         state.outpage.append('  \n'
                              + debug_stats.to_markdown().replace('\n',
                                                                  '  \n'))
@@ -316,7 +333,9 @@ def render_sentence(text, match, state, emb_id, doc_title,
                                      'n_results': state.n_results,
                                      'search_type': 'mening',
                                      'scope': state.scope,
-                                     'debug': state.debug},
+                                     'debug': state.debug,
+                                     'top_n_ranking': state.top_n_ranking,
+                                     'rank_by': state.rank_by},
                                     doseq=True)
     # st.markdown(
     #     '[visa fler resultat som liknar avsnittet!]' +
@@ -328,14 +347,24 @@ def render_sentence(text, match, state, emb_id, doc_title,
     state.result.append(res)
 
 
-def order_results_by_sents(distances, neighbours, prompts, text):
+def order_results_by_sents(distances, neighbours, prompts, text, rank_by):
     print(f'{time.asctime()} start sorting by sents')
     match_dict = {}
     ranked_dict = OrderedDict()
 
     def rank_func(x):
-        return (len(match_dict[x]['rank']))
+        filters = []
+        if 'count' in rank_by:
+            filters.append(match_dict[x]['count'])
+        if 'average rank' in rank_by:
+            filters.append(-sum(match_dict[x]['rank']) /
+                           len(match_dict[x]['rank']))
+        if 'average distance' in rank_by:
+            filters.append(1-sum(match_dict[x]['distance']) /
+                           len(match_dict[x]['distance']))
+        # return (len(match_dict[x]['rank']))
     # , sum(match_dict[x]['distance'], match_dict[x]['count'])
+        return filters
 
     for i, prompt in enumerate(prompts):
         for j, n in enumerate(neighbours[i]):
@@ -360,31 +389,32 @@ def order_results_by_sents(distances, neighbours, prompts, text):
 
 
 @st.cache(allow_output_mutation=True)
-def run_ranking(prompts, train, n=30, sorting_func=order_results_by_sents,
+def run_ranking(prompts, train, filter, rank_by, n=30,
+                sorting_func=order_results_by_sents,
                 emb_id=None):
     start = time.time()
     if emb_id is None:
         embeddings = embed_text(prompts, save_out=False)
     else:
         embeddings = torch.unsqueeze(train['embeddings'][emb_id], dim=0)
-    outpath = f'{len(train)}_nn.gzip'
-    if True:
-        if not os.path.exists(outpath):
-            nn = NearestNeighbors(n_neighbors=40, metric='cosine', p=1)
-            nn.fit(train['embeddings'])
-            with gzip.GzipFile(outpath, 'wb') as data_out:
-                data_out.write(pickle.dumps(nn))
-        else:
-            nn = load_binary(outpath)
+    outpath = f'{len(train["embeddings"])}_nn.gzip'
+    if not os.path.exists(outpath):
+        nn = NearestNeighbors(n_neighbors=40, metric='cosine', p=1)
+        nn.fit(train['embeddings'])
+        with gzip.GzipFile(outpath, 'wb') as data_out:
+            data_out.write(pickle.dumps(nn))
+    else:
+        nn = load_binary(outpath)
     distance, neighbours = nn.kneighbors(embeddings, n_neighbors=n)
     print(f'{time.asctime()} run_ranking({prompts})',
           f'took {time.time()-start} s ', sorting_func)
-    return sorting_func(distance, neighbours, prompts, train['meta'])
+    return sorting_func(distance, neighbours, prompts, train['meta'],
+                        rank_by)
 
 
 @st.cache
-def order_results_by_documents(distances, neighbours, prompts, text,
-                               n_neighbours=10):
+def order_results_by_documents(distances, neighbours, prompts, text, rank_by):
+    # n_neighbours=10):
     """
     groups matches by document and orders according to avg document rank and
     similarity (still needs to factor in average match count per document)
@@ -395,6 +425,7 @@ def order_results_by_documents(distances, neighbours, prompts, text,
     max_distances = []
     max_dist = 0
     topic_count = 0
+    n_neighbours = len(neighbours[0])
     for i, prompt in enumerate(prompts):
         topic_count += 1
         for j, n in enumerate(neighbours[i]):
@@ -463,15 +494,14 @@ def main():
     print(f'{time.asctime()} start main')
     state = _get_state()
     read_query_params(state)
-    st.sidebar.title(":wrench: Inställningar")
-    if st.sidebar.checkbox('begränsa träffmängden'):
-        if not state.n_results:
-            state.n_results = 10
-            state.n_results = st.sidebar.slider('max antal matchningar',
-                                                min_value=1, max_value=30,
-                                                value=state.n_results)
-    else:
-        state.n_results = 0
+    if not state.train:
+        state.train = load_documents(
+            'training_data/full_match_sample.gzip',
+            'training_data/fixed_punctuation_new_matches.csv')
+
+            # './filtered_vs_unfiltered_nn/full_matches_353599_embeddings.gzip',
+            # 'meta.pickle.gz')
+
     # print('call main')
     # update_query_params(state)
 
@@ -504,13 +534,38 @@ def get_headers():
 
 
 def setup_settings_bar(state):
+    st.sidebar.title(":wrench: Inställningar")
+    # this is buggy
+    # if st.sidebar.checkbox('begränsa träffmängden'):
+    #     if not state.n_results:
+    #         state.n_results = 10
+    #         state.n_results = st.sidebar.slider('max antal matchningar',
+    #                                             min_value=1, max_value=30,
+    #                                             value=state.n_results)
+    # else:
+    state.n_results = 0
+
+    st.sidebar.markdown('---')
+    if not state.top_n_ranking:
+        state.top_n_ranking = 10
+    state.top_n_ranking = st.sidebar.number_input('Top n ranking:',
+                                                  min_value=5,
+                                                  value=state.top_n_ranking)
+    if st.sidebar.checkbox('unlimited'):
+        state.top_n_ranking = len(state.train['embeddings'])
+
     st.sidebar.markdown('---')
     select_options = ['ämne', 'mening']
     index = select_options.index(state.search_type) \
         if state.search_type else 0
     state.search_type = st.sidebar.radio('söka efter', select_options, index)
-    st.sidebar.markdown('---')
 
+    st.sidebar.markdown('---')
+    select_options = ['count', 'average rank', 'average distance']
+    state.rank_by = st.sidebar.multiselect('rangordna efter', select_options,
+                                   state.rank_by)
+
+    st.sidebar.markdown('---')
     from_options = [i for i in range(1994, 2020, 1)]
     index = 0
     if state.time_from:
@@ -536,6 +591,7 @@ def setup_settings_bar(state):
     # print('set state according to url:')
     # update_query_params(state)
 
+
 def page_sent_search(state):
     setup_settings_bar(state)
     default = ''
@@ -554,10 +610,6 @@ def page_sent_search(state):
             emb_id = emb_id[0]
         if isinstance(emb_id, str):
             emb_id = int(emb_id)
-        if not state.train:
-            state.train = load_documents(
-                './filtered_vs_unfiltered_nn/full_matches_353599_embeddings.gzip',
-                'meta.pickle.gz')
         default = state.train['meta'][emb_id][3]
         state.search_type = 'mening'
     else:
@@ -596,9 +648,11 @@ def page_sent_search(state):
             and state.search_type == 'ämne')):
         state.outpage = []
         if not header:
-            # header = st.header(f'Resultat för {state.search_type}sbaserat sökning')
-            state.outpage.append(f'# Resultat för {state.search_type}sbaserat sökning')
-        result_link = st.empty()
+            # header = st.header(
+            # f'Resultat för {state.search_type}sbaserat sökning')
+            state.outpage.append(
+                f'# Resultat för {state.search_type}sbaserat sökning')
+        # result_link = st.empty()
         if (state.query_cause or state.query_effect)\
            and state.search_type == 'ämne':
             state.query = None
@@ -607,7 +661,7 @@ def page_sent_search(state):
             rank(state, prompts, emb_id=emb_id)
         elif default:
             state.query_cause = state.query_effect = None
-            #st.markdown(f'## ”_{default}_”')
+            # st.markdown(f'## ”_{default}_”')
             state.outpage.append(f'## ”_{default}_”')
             rank(state, [default], emb_id=emb_id)
         if state.result:
@@ -632,8 +686,10 @@ def rank(state, prompts, emb_id=None):
     start = time.time()
     if not hasattr(state, 'train') or not state.train:
         state.train = load_documents(
-            './filtered_vs_unfiltered_nn/full_matches_353599_embeddings.gzip',
-            'meta.pickle.gz')
+            'training_data/full_match_sample.gzip',
+            'training_data/fixed_punctuation_new_matches.csv')
+            #'./filtered_vs_unfiltered_nn/full_matches_353599_embeddings.gzip',
+            #'meta.pickle.gz')
     if isinstance(prompts, str):
         term = prompts
         prompts = [prompts]
@@ -649,23 +705,33 @@ def rank(state, prompts, emb_id=None):
         state.term = term
     if not state.ranking:
         state.ranking = {}
-    ranking_key = (term, state.scope)
+    ranking_key = (term, state.scope, state.top_n_ranking, ' '.join(
+        sorted(state.rank_by)))
     if ranking_key not in state.ranking:
+        print('reranking for', ranking_key)
         sorting_func = order_results_by_documents if state.scope == 1\
             else order_results_by_sents
         state.ranking[ranking_key] = run_ranking(
             prompts, state.train,
-            n=10, emb_id=emb_id,
+            filter={'time_from': state.time_from,
+                    'time_to': state.time_to,
+                    'emb_id': emb_id},
+            rank_by=state.rank_by,
+            n=state.top_n_ranking, emb_id=emb_id,
             sorting_func=sorting_func)
     n_matches = 0
     ranking_unit = 'document' if state.scope == 1 else 'sentence'
     logging.info(
-        f'ranking {len(state.ranking[ranking_key])} {ranking_unit}s for "{term}"')
+        f'ranking {len(state.ranking[ranking_key])}' +
+        f'{ranking_unit}s for "{ranking_key}"')
+    seen_documents = []
     for el in state.ranking[ranking_key]:
         hit = display_result(state, term, el, {'time_from': state.time_from,
                                                'time_to': state.time_to,
-                                               'emb_id': emb_id})
+                                               'emb_id': emb_id},
+                             seen_documents)
         if hit:
+            seen_documents.append(el)
             n_matches += 1
             if state.n_results and n_matches >= state.n_results:
                 break
@@ -705,7 +771,8 @@ def is_updated(state):
     """
     params = ['emb_id', 'time_from', 'time_to', 'debug',
               'n_results', 'search_type', 'scope', 'query',
-              'query_cause', 'query_effect']
+              'query_cause', 'query_effect', 'top_n_ranking',
+              'rank_by']
     for param in params:
         if state.previous and state.previous[param] != state[param]:
             # print('changed value', state.previous[param], state[param])
@@ -724,7 +791,8 @@ def record_current_search_settings(state):
     state.previous = {}
     params = ['emb_id', 'time_from', 'time_to', 'debug',
               'n_results', 'search_type', 'scope', 'query',
-              'query_cause', 'query_effect']
+              'query_cause', 'query_effect',
+              'rank_by']
     for param in params:
         print('writing:', param, state.param)
         state.previous[param] = state.param
@@ -743,7 +811,10 @@ def read_query_params(state=None):
         if v[0].isnumeric():
             state[k] = int(v[0])
         else:
-            state[k] = v[0] if not v[0] == 'None' else None
+            if len(v) > 1:
+                state[k] = v
+            else:
+                state[k] = v[0] if not v[0] == 'None' else None
     # print('done')
     if isinstance(state, dict):
         return state
@@ -752,7 +823,8 @@ def read_query_params(state=None):
 def update_query_params(state):
     params = ['emb_id', 'time_from', 'time_to', 'debug',
               'n_results', 'search_type', 'scope', 'query',
-              'query_cause', 'query_effect']
+              'query_cause', 'query_effect', 'top_n_ranking',
+              'rank_by']
     new_states = {param: state[param] for param in params}
     old_states = read_query_params()
     # read_query_params(state)
@@ -762,11 +834,13 @@ def update_query_params(state):
 
     for param in params:
         if new_states[param]:
-            # print(f'same old: {param}: {old_states[param] if param in old_states else None} {new_states[param]}')
+            # print(f'same old: {param}: {old_states[param]' +
+            # f'if param in old_states else None} {new_states[param]}')
             if not has_changes and (param not in old_states
                                     or new_states[param] != old_states[param]):
                 if param in old_states:
-                    # print(f'update qp: {param}: {old_states[param]} {new_states[param]}')
+                    # print(f'update qp: {param}: {old_states[param]}' +
+                    # f'{new_states[param]}')
                     has_changes = True
                 # else:
                     # print(f'update qp: {param}: missing {new_states[param]}')
@@ -780,7 +854,8 @@ def get_query_params(state):
     query_params = st.experimental_get_query_params()
     params = ['emb_id', 'time_from', 'time_to', 'debug',
               'n_results', 'search_type', 'scope', 'query',
-              'query_cause', 'query_effect']
+              'query_cause', 'query_effect', 'top_n_ranking',
+              'rank_by']
     for p in params:
         if p not in query_params and state[p] is not None:
             query_params[p] = state[p]
