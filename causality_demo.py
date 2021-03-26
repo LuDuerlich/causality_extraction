@@ -35,11 +35,13 @@ logging.basicConfig(format='%(asctime)s %(message)s',
                     level=logging.INFO)
 
 
-def get_table_download_link(table):
+def get_table_download_link(table, query):
     output = BytesIO()
     writer = pd.ExcelWriter(output, engine='xlsxwriter')
     table.to_excel(writer, index=False, sheet_name='Sökresultat',
-                   float_format="%.2f")
+                   float_format="%.2f", startrow=2)
+    worksheet = writer.sheets['Sökresultat']
+    worksheet.write_string(0, 0, query)
 
     writer.save()
     output_val = output.getvalue()
@@ -80,7 +82,15 @@ def generate_prompts(cause=None, effect=None):
     def fill_templates(term, templates, placeholder='X'):
         return [template.replace(placeholder, term) for template in templates]
 
+    # We used query expansion before, if we ever go back, we need to
+    # tokenize differently so that neighbours representing part of a word
+    # e.g. ##klimat get treated correctly.
+    # Alternatively we could filter them out. Maybe that is better since
+    # using them unaltered would lead to weird combinations depending on
+    # template and position:
+    # (i.e. ['[MASK]', 'orsakar', '##klimat'] -> '[MASK] orsakarklimat'!?)
     # topic_terms = [topic]
+
     # generate prompts
     prompts = []
     if effect:
@@ -207,25 +217,42 @@ def display_result(state, term, doc_id, filter, seen_documents):
     display a single match if it matches the filter
     """
     # start = time.time()
-    if doc_id in seen_documents:
-        return False
-    match = state.ranking[(term, state.scope, state.top_n_ranking,
-                           ' '.join(sorted(state.rank_by)))][doc_id]
-    stats = ['rank', 'count', 'distance', 'nb_matches']
+
+    key = doc_id
     if isinstance(doc_id, tuple):
         text, doc_id, sent_nb, match_emb_id = doc_id
     doc_id = doc_id.split('_')[-1].split('.')[0]
+
+    if doc_id in seen_documents:
+        return False
+    stats = ['rank', 'count', 'distance', 'nb_matches']
     doc_title, date = ids_to_date[doc_id][0]
     # date = datetime.datetime.fromisoformat(date)
     year = doc_title.split()[-1].split(':')[0]
     assert year.isnumeric(), f'malformed document title {doc_title} ({year})'
     year = int(year)
+    print(key)
+    match = state.ranking[(term, state.scope, state.top_n_ranking,
+                           ' '.join(state.rank_by))][key]
+
+    def rank_func(x):
+        filters = []
+        for filter in state.rank_by:
+            if filter == 'count':
+                filters.append(match['matched_text'][x]['count'])
+            if filter == 'average rank':
+                filters.append(-(sum(match['matched_text'][x]['rank']) /
+                                 len(match['matched_text'][x]['rank'])))
+            if filter == 'average distance':
+                filters.append(1-(sum(match['matched_text'][x]['distance']) /
+                                  len(match['matched_text'][x]['distance'])))
+        return filters
 
     def format_stats(k, match=match):
         return (": ".join([k, f"{match[k]:>1.3f}"])
                 if isinstance(match[k], float)
                 else ": ".join([k,
-                                f"{sum(match[k]) / match['count']:>1.3f}"
+                                f"{sum(match[k]) / len(match[k]):>1.3f}"
                                 if isinstance(match[k], list)
                                 else str(match[k])]))\
                                      if k in match else ''
@@ -250,9 +277,7 @@ def display_result(state, term, doc_id, filter, seen_documents):
             # st.subheader(stats_header)
             state.outpage.append(f'### {stats_header}')
             for sent in sorted(match['matched_text'],
-                               key=lambda x: (
-                                   match['matched_text'][x]['distance'],
-                                   -1 * match['matched_text'][x]['rank'])):
+                               key=rank_func, reverse=True):
                 sentence_match = match['matched_text'][sent]
                 if displayed_sents == 3:
                     break
@@ -286,8 +311,6 @@ def display_result(state, term, doc_id, filter, seen_documents):
 def render_sentence(text, match, state, emb_id, doc_title,
                     stats, doc_id, html_link=None, section=None):
     # target = text.split('**')[1]
-    if not hasattr(state, 'more_like') or not state.more_like_buttons:
-        state.more_like_buttons = {}
     if not state.result:
         state.result = []
     res = {}
@@ -307,16 +330,28 @@ def render_sentence(text, match, state, emb_id, doc_title,
     # f'count: {match["count"]}')
 
     if state.debug == 1:
-        debug_stats = pd.DataFrame({'rank': match["rank"]
-                                    + [sum(match['rank']) /
-                                       len(match['rank'])],
-                                    'distance': match["distance"]
-                                    + [sum(match['distance']) /
-                                       len(match['distance'])]})
+        if len(match['rank']) > 1:
+            debug_stats = pd.DataFrame({'rank': match["rank"]
+                                        + [sum(match['rank']) /
+                                           len(match['rank'])],
+                                        'distance': match["distance"]
+                                        + [sum(match['distance']) /
+                                           len(match['distance'])],
+                                        'prompts': match['prompts'] + ['avg']})
+        else:
+            if state.search_type == 'ämne':
+                debug_stats = pd.DataFrame({'rank': match["rank"],
+                                            'distance': match["distance"],
+                                            'prompt': match['prompts']})
+            else:
+                debug_stats = pd.DataFrame({'rank': match["rank"],
+                                            'distance': match["distance"]})
+
         state.outpage.append('  \n'
                              + debug_stats.to_markdown().replace('\n',
                                                                  '  \n'))
-        state.outpage.append(f'  \nembedding id: {emb_id}')
+        state.outpage.append(f'  \nembedding id: {emb_id},' +
+                             f'count {match["count"]}')
         # st.table(debug_stats)
         # st.write(f'embedding id: {emb_id}')
     res['doc'] = doc_title
@@ -354,23 +389,26 @@ def order_results_by_sents(distances, neighbours, prompts, text, rank_by):
 
     def rank_func(x):
         filters = []
-        if 'count' in rank_by:
-            filters.append(match_dict[x]['count'])
-        if 'average rank' in rank_by:
-            filters.append(-sum(match_dict[x]['rank']) /
-                           len(match_dict[x]['rank']))
-        if 'average distance' in rank_by:
-            filters.append(1-sum(match_dict[x]['distance']) /
-                           len(match_dict[x]['distance']))
-        # return (len(match_dict[x]['rank']))
-    # , sum(match_dict[x]['distance'], match_dict[x]['count'])
+        for filter in rank_by:
+            if filter == 'count':
+                filters.append(match_dict[x]['count'])
+            if filter == 'average rank':
+                filters.append(-sum(match_dict[x]['rank']) /
+                               len(match_dict[x]['rank']))
+            if filter == 'average distance':
+                filters.append(1-sum(match_dict[x]['distance']) /
+                               len(match_dict[x]['distance']))
         return filters
 
+    # compute context size (ignoring document field)
+    available_context = len(text[0]) - 1
+    end_left = math.ceil(available_context/2)
+    top_n = len(neighbours[0])
     for i, prompt in enumerate(prompts):
         for j, n in enumerate(neighbours[i]):
-            contents = " ".join([text[n][-3],
-                                 '**' + text[n][-2] + '**',
-                                 text[n][-1]])
+            contents = " ".join([' '.join(text[n][1:end_left]),
+                                 '**' + text[n][end_left] + '**',
+                                 ' '.join(text[n][end_left+1:])])
             doc_id, id = text[n][0].split(':', 1)
             embedding_id = n
             key = (contents, doc_id, id, embedding_id)
@@ -378,10 +416,26 @@ def order_results_by_sents(distances, neighbours, prompts, text, rank_by):
                 match_dict[key] = {'rank': [],
                                    'count': 0,
                                    'nb_matches': 0,
-                                   'distance': []}
+                                   'distance': [],
+                                   'prompt_ids': [],
+                                   'prompts': []}
             match_dict[key]['rank'].append(j)
             match_dict[key]['distance'].append(distances[i][j])
             match_dict[key]['count'] += 1
+            match_dict[key]['prompt_ids'].append(i)
+            match_dict[key]['prompts'].append(prompt)
+    # heuristics to get complete average:
+    # we assume each neighbor missing in a prompt's
+    # top n ranking is at best at rank n+1 at a similar
+    # distance to the nth nearest neighbor
+    for key in match_dict:
+        if match_dict[key]['count'] < len(prompts):
+            for i, prompt in enumerate(prompts):
+                if i not in match_dict[key]['prompt_ids']:
+                    match_dict[key]['rank'].append(top_n)
+                    match_dict[key]['distance'].append(distances[i][-1])
+                    match_dict[key]['prompts'].append(prompt)
+
     for key in sorted(match_dict, key=rank_func, reverse=True):
         ranked_dict[key] = match_dict[key]
     print(f'{time.asctime()} stop sorting')
@@ -395,6 +449,8 @@ def run_ranking(prompts, train, filter, rank_by, n=30,
     start = time.time()
     if emb_id is None:
         embeddings = embed_text(prompts, save_out=False)
+        if len(prompts) > 1:
+            n *= 3
     else:
         embeddings = torch.unsqueeze(train['embeddings'][emb_id], dim=0)
     outpath = f'{len(train["embeddings"])}_nn.gzip'
@@ -406,8 +462,8 @@ def run_ranking(prompts, train, filter, rank_by, n=30,
     else:
         nn = load_binary(outpath)
     distance, neighbours = nn.kneighbors(embeddings, n_neighbors=n)
-    print(f'{time.asctime()} run_ranking({prompts})',
-          f'took {time.time()-start} s ', sorting_func)
+    print(f'{time.asctime()} run_ranking({prompts}) for {n} neighbors',
+          f' took {time.time()-start} s ', sorting_func)
     return sorting_func(distance, neighbours, prompts, train['meta'],
                         rank_by)
 
@@ -421,18 +477,31 @@ def order_results_by_documents(distances, neighbours, prompts, text, rank_by):
     """
     print('DOCUMENT based ORDERING')
     print(f'{time.asctime()} start sorting')
+
+    def rank_func(x):
+        filters = []
+        for filter in rank_by:
+            if filter == 'count':
+                filters.append(match_dict[x]['count'])
+            if filter == 'average rank':
+                filters.append(-match_dict[x]['rank'])
+            if filter == 'average distance':
+                filters.append(1-match_dict[x]['distance'])
+        return filters
+
     match_dict = {}
-    max_distances = []
-    max_dist = 0
-    topic_count = 0
-    n_neighbours = len(neighbours[0])
+    top_n = len(neighbours[0])
+    # compute context size (ignoring document field)
+    available_context = len(text[0]) - 1
+    end_left = math.ceil(available_context/2)
+    top_n = len(neighbours[0])
     for i, prompt in enumerate(prompts):
-        topic_count += 1
         for j, n in enumerate(neighbours[i]):
             match = {}
-            contents = " ".join([text[n][-3],
-                                 '**' + text[n][-2] + '**',
-                                 text[n][-1]])
+            contents = " ".join([' '.join(text[n][1:end_left]),
+                                 '**' + text[n][end_left] + '**',
+                                 ' '.join(text[n][end_left+1:])])
+
             match['content'] = contents
             match['doc_id'], id = text[n][0].split(':', 1)
             match['emb_id'] = n
@@ -443,31 +512,40 @@ def order_results_by_documents(distances, neighbours, prompts, text, rank_by):
                                                'distance': 0,
                                                'matched_text': {}}
             distance = distances[i][j]
-            if id not in match_dict[match['doc_id']]['matched_text']:
-                match_dict[match['doc_id']]['matched_text'][id] = {
+            key = match['doc_id']
+            if id not in match_dict[key]['matched_text']:
+                match_dict[key]['matched_text'][id] = {
                     'rank': [],
                     'count': 0,
                     'distance': [],
+                    'prompt_ids': [],
+                    'prompts': [],
                     'text': match}
-            match_dict[match['doc_id']]['matched_text'][id]['rank'].append(j)
-            match_dict[match['doc_id']]['matched_text'][id]['distance'].append(
-                distance)
-            match_dict[match['doc_id']]['matched_text'][id]['count'] += 1
-            distance = float(distance)
-            if distance > max_dist:
-                max_dist = distance
-        max_distances.append(max_dist)
+            match_dict[key]['matched_text'][id]['rank'].append(j)
+            match_dict[key]['matched_text'][id]['distance'].append(distance)
+            match_dict[key]['matched_text'][id]['count'] += 1
+            match_dict[key]['matched_text'][id]['prompt_ids'].append(i)
+            match_dict[key]['matched_text'][id]['prompts'].append(prompt)
+
+    # for key in match_dict:
+    #     if match_dict[key]['count'] < len(prompts):
+
     for doc_id, neighbor in match_dict.items():
         count = 0
         for text in neighbor['matched_text']:
+            if neighbor['matched_text'][text]['count'] < len(prompts):
+                for i, prompt in enumerate(prompts):
+                    if i not in neighbor['matched_text'][text]['prompt_ids']:
+                        neighbor['matched_text'][text]['rank'].append(top_n)
+                        neighbor['matched_text'][text]['distance'].append(
+                            distances[i][-1])
+                        neighbor['matched_text'][text]['prompts'].append(
+                            prompt)
             stats = neighbor['matched_text'][text]
-            avg_rank = (((topic_count - stats['count'])
-                         * (n_neighbours + 1))
-                        + sum([int(el) + 1 for el in stats['rank']])
-                        ) / topic_count
-            avg_distance = (((topic_count - stats['count']) * max_dist)
-                            + sum([float(el) for el in stats['distance']])
-                            ) / topic_count
+            avg_rank = sum([int(el) + 1 for el in stats['rank']]) / len(
+                stats['rank'])
+            avg_distance = sum([float(el) for el in stats['distance']])\
+                / len(stats['distance'])
             match_dict[doc_id]['count'] += stats['count']
             match_dict[doc_id]['rank'] += avg_rank
             match_dict[doc_id]['distance'] += avg_distance
@@ -478,8 +556,8 @@ def order_results_by_documents(distances, neighbours, prompts, text, rank_by):
         match_dict[doc_id]['distance'] /= count
     neighbours = OrderedDict()
     for doc in sorted(match_dict,
-                      key=lambda x: (match_dict[x]['distance'],
-                                     -1 * match_dict[x]['rank'])):
+                      key=rank_func,
+                      reverse=True):
         neighbours[doc] = match_dict[doc]
     print(f'{time.asctime()} stop sorting')
     return neighbours
@@ -497,7 +575,7 @@ def main():
     if not state.train:
         state.train = load_documents(
             'training_data/full_match_sample.gzip',
-            'training_data/fixed_punctuation_new_matches.csv')
+            'training_data/fixed_punct.csv')
 
             # './filtered_vs_unfiltered_nn/full_matches_353599_embeddings.gzip',
             # 'meta.pickle.gz')
@@ -551,8 +629,8 @@ def setup_settings_bar(state):
     state.top_n_ranking = st.sidebar.number_input('Top n ranking:',
                                                   min_value=5,
                                                   value=state.top_n_ranking)
-    if st.sidebar.checkbox('unlimited'):
-        state.top_n_ranking = len(state.train['embeddings'])
+    #if st.sidebar.checkbox('unlimited'):
+    #    state.top_n_ranking = len(state.train['embeddings'])
 
     st.sidebar.markdown('---')
     select_options = ['ämne', 'mening']
@@ -563,7 +641,7 @@ def setup_settings_bar(state):
     st.sidebar.markdown('---')
     select_options = ['count', 'average rank', 'average distance']
     state.rank_by = st.sidebar.multiselect('rangordna efter', select_options,
-                                   state.rank_by)
+                                           state.rank_by)
 
     st.sidebar.markdown('---')
     from_options = [i for i in range(1994, 2020, 1)]
@@ -658,10 +736,16 @@ def page_sent_search(state):
             state.query = None
             prompts = generate_prompts(cause=state.query_cause,
                                        effect=state.query_effect)
+            query = ''
+            if state.query_cause:
+                query += f'orsak: {state.query_cause}'
+            if state.query_effect:
+                query += f', verkan: {state.query_effect}'
+            query = query.lstrip(', ')
             rank(state, prompts, emb_id=emb_id)
         elif default:
             state.query_cause = state.query_effect = None
-            # st.markdown(f'## ”_{default}_”')
+            query = default
             state.outpage.append(f'## ”_{default}_”')
             rank(state, [default], emb_id=emb_id)
         if state.result:
@@ -669,7 +753,7 @@ def page_sent_search(state):
             # result_link.markdown(get_table_download_link(table),
             # unsafe_allow_html=True)
             state.outpage = state.outpage[:state.insert_link]\
-                + [get_table_download_link(table)]\
+                + [get_table_download_link(table, query)]\
                 + state.outpage[state.insert_link:]
         st.markdown('  \n'.join(state.outpage[:-1]), unsafe_allow_html=True)
     elif state.outpage:
@@ -687,7 +771,7 @@ def rank(state, prompts, emb_id=None):
     if not hasattr(state, 'train') or not state.train:
         state.train = load_documents(
             'training_data/full_match_sample.gzip',
-            'training_data/fixed_punctuation_new_matches.csv')
+            'training_data/fixed_punct.csv')
             #'./filtered_vs_unfiltered_nn/full_matches_353599_embeddings.gzip',
             #'meta.pickle.gz')
     if isinstance(prompts, str):
@@ -705,8 +789,8 @@ def rank(state, prompts, emb_id=None):
         state.term = term
     if not state.ranking:
         state.ranking = {}
-    ranking_key = (term, state.scope, state.top_n_ranking, ' '.join(
-        sorted(state.rank_by)))
+    ranking_key = (term, state.scope, state.top_n_ranking,
+                   ' '.join(state.rank_by))
     if ranking_key not in state.ranking:
         print('reranking for', ranking_key)
         sorting_func = order_results_by_documents if state.scope == 1\
@@ -723,7 +807,7 @@ def rank(state, prompts, emb_id=None):
     ranking_unit = 'document' if state.scope == 1 else 'sentence'
     logging.info(
         f'ranking {len(state.ranking[ranking_key])}' +
-        f'{ranking_unit}s for "{ranking_key}"')
+        f' {ranking_unit}s for "{ranking_key}"')
     seen_documents = []
     for el in state.ranking[ranking_key]:
         hit = display_result(state, term, el, {'time_from': state.time_from,
@@ -731,7 +815,12 @@ def rank(state, prompts, emb_id=None):
                                                'emb_id': emb_id},
                              seen_documents)
         if hit:
-            seen_documents.append(el)
+            if isinstance(el, tuple):
+                text, doc_id, sent_nb, match_emb_id = el
+            else:
+                doc_id = el
+            doc_id = doc_id.split('_')[-1].split('.')[0]
+            seen_documents.append(doc_id)
             n_matches += 1
             if state.n_results and n_matches >= state.n_results:
                 break
@@ -739,6 +828,7 @@ def rank(state, prompts, emb_id=None):
             state.outpage.append('---')
     print(f'{time.asctime()} ranking({prompts}) took {time.time()-start} s ')
     print(f'{time.asctime()} all matches displayed')
+    print('seen documents:', seen_documents)
 
 
 def page_dashboard(state):
