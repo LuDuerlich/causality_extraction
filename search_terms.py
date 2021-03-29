@@ -240,6 +240,7 @@ keys_to_pos = {'minska': 'VB',
                  'uppgång': 'NN',
                  'tilltagande': 'NN',
                  'höjning': 'NN'}
+
 tagged_list = ['"berodde på"',
                '"beroddes på"',
                '"bero på"',
