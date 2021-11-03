@@ -19,7 +19,7 @@ path = os.path.dirname(os.path.realpath('__file__'))
 if not path.startswith('/'):
     path = '/' + path
 
-def fix_file(filename):
+def fix_file(filename, outdir=None, markup='html'):
     """replace magic characters in a markup file with entity characters"""
     if filename.endswith('.html'):
         markup = 'html'
@@ -32,7 +32,11 @@ def fix_file(filename):
                              features='lxml')
     segments = filename.split('/')
     dir_, name = '/'.join(segments[:-1]), segments[-1]
-    with open('/'.join([dir_, 'new_' + name]) if dir_ else 'new_' + name, 'w') as ofile:
+    if outdir and outdir != dir_:
+        outname = '/'.join([outdir, name])
+    else:
+        outname = '/'.join([dir_, 'new_' + name]) if dir_ else 'new_' + name
+    with open(outname, 'w') as ofile:
         if markup == 'html':
             ofile.write(soup.prettify(formatter='html5'))
         else:
